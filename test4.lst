@@ -1,0 +1,277 @@
+              	; --------------------------------------
+              	; zasm: assemble "test4.asm"
+              	; date: 2019-12-04 23:05:47
+              	; --------------------------------------
+
+
+0800:         	#define ROMSIZE		2048
+0000:         	.org 0
+              		; ******** interrupts are disabled after reset ********
+0000: ED56    		im 1				; use interrupt mode 1
+              	
+              		; ********         test upper 32K RAM          ********
+0002: 210080  		ld hl, 08000h
+0005: 06AA    		ld b, 0AAh
+0007: 0E55    		ld c, 055h
+0009:         	_test_upper_32K:
+0009: 70      		ld (hl), b
+000A: 7E      		ld a, (hl)
+000B: EEAA    		xor 0AAh
+000D: C2A901  		jp nz, _ram_error_upper
+0010: 71      		ld (hl), c
+0011: 7E      		ld a, (hl)
+0012: EE55    		xor 055h
+0014: C2A901  		jp nz, _ram_error_upper
+0017: 23      		inc hl
+0018: 20EF    		jr nz, _test_upper_32K
+              	
+              		; ********        copy firmware to F000        ********
+001A: 210000  		ld hl, 0
+001D: 1100F0  		ld de, 0F000h		; destination of rom image
+0020: 010008  		ld bc, ROMSIZE		; copy ROMSIZE bytes
+0023: EDB0    		ldir			;
+              	
+0025: C328F0  		jp $+0F003h		; jump to copied program
+0028: D30F    		out (15), a		; disable rom and enable ram bank 1
+              	
+002A: C396F0  		jp 0F000h + continue_in_ram
+              	
+002D: FFFFFFFF	.org 38h
+0031: FF...   	
+              	
+0038:         	_int_handler:
+              	
+0038: FB      		ei
+0039: ED4D    		reti
+              	
+              	
+003B: FFFFFFFF	.org 66h
+003F: FF...   	
+              	
+0066:         	_nmi_handler:
+0066: ED4D    		reti
+              	
+0068:         	hellomsg:
+0068: 52656963	.ascii "Reichel Z80 System, 64K RAM OK", 0ah, 0dh
+006C: 68656C20	
+0070: 5A383020	
+0074: 53797374	
+0078: 656D2C20	
+007C: 36344B20	
+0080: 52414D20	
+0084: 4F4B0A0D	
+0088: 4649464F	.ascii "FIFO Loader", 0ah, 0dh, 00h
+008C: 204C6F61	
+0090: 6465720A	
+0094: 0D00    	
+              	
+0096:         	continue_in_ram:
+0096: 21FF7F  		ld hl, 7FFFh
+0099: 06AA    		ld b, 0AAh
+009B: 0E55    		ld c, 055h
+009D:         	_test_lower_32K:
+009D: 70      		ld (hl), b
+009E: 7E      		ld a, (hl)
+009F: EEAA    		xor 0AAh
+00A1: C2B3F1  		jp nz, 0F000h + _ram_error_lower
+00A4: 71      		ld (hl), c
+00A5: 7E      		ld a, (hl)
+00A6: EE55    		xor 055h
+00A8: C2B3F1  		jp nz, 0F000h + _ram_error_lower
+00AB: 2B      		dec hl
+00AC: 20EF    		jr nz, _test_lower_32K
+              	
+00AE: 2100F0  		ld hl, 0F000h
+00B1: 110000  		ld de, 0
+00B4: 010008  		ld bc, ROMSIZE
+00B7: EDB0    		ldir		; copy it back, ending up in ram
+              	
+00B9: C3BC00  		jp _ram_entry	; rom code is now in ram, at the same address
+              	
+00BC:         	_ram_entry:
+00BC: 31FFFF  		ld sp, 0FFFFh		; init stack
+              	
+00BF: CD7E01  		call _fifo_await_usb_config
+              	
+00C2: 216800  		ld hl, hellomsg
+00C5: CD9E01  		call _fifo_print_str
+              	
+00C8: CD9001  		call _fifo_get_byte	; get target addr low
+00CB: 325E01  		ld (addr), a
+00CE: CD9001  		call _fifo_get_byte	; get target addr hi
+00D1: 325F01  		ld (addr+1), a
+00D4: CD9001  		call _fifo_get_byte	; get size low
+00D7: 326001  		ld (size), a
+00DA: CD9001  		call _fifo_get_byte	; get size high
+00DD: 326101  		ld (size+1), a
+00E0: CD9001  		call _fifo_get_byte	; get checksum low
+00E3: 326201  		ld (cksum), a
+00E6: CD9001  		call _fifo_get_byte	; get checksum hi
+00E9: 326301  		ld (cksum+1), a
+00EC: ED5B5E01		ld de, (addr)
+00F0: 2A6001  		ld hl, (size)
+              	
+00F3: 3E53    		ld a, 'S'
+00F5: CD8501  		call _fifo_put_byte
+00F8: 7C      		ld a, h
+00F9: CDBD01  		call _print_hex_byte
+00FC: 7D      		ld a, l
+00FD: CDBD01  		call _print_hex_byte
+              	
+0100:         	_download_code:
+0100: CD9001  		call _fifo_get_byte
+0103: 12      		ld (de), a
+0104: 13      		inc de
+0105: 2D      		dec l
+0106: 7D      		ld a, l
+0107: FEFF    		cp 0FFh
+0109: 20F5    		jr nz, _download_code
+010B: 7C      		ld a, h
+010C: B7      		or a
+010D: 2803    		jr z, _download_finish
+010F: 25      		dec h
+0110: 18EE    		jr _download_code
+0112:         	_download_finish:
+0112: 1B      		dec de
+0113: 210000  		ld hl, 0
+0116: ED4B6001		ld bc, (size)
+011A:         	_calc_checksum
+011A: 1A      		ld a, (de)
+011B: 85      		add a, l
+011C: 6F      		ld l, a
+011D: 3001    		jr nc, skip_carry
+011F: 24      		inc h
+0120:         	skip_carry:
+0120: 1B      		dec de
+0121: 0D      		dec c
+0122: 79      		ld a, c
+0123: FEFF    		cp 0ffh
+0125: 20F3    		jr nz, _calc_checksum
+0127: 78      		ld a, b
+0128: B7      		or a
+0129: 2803    		jr z, _finish_checksum
+012B: 05      		dec b
+012C: 18EC    		jr _calc_checksum
+012E:         	_finish_checksum:
+              	
+012E: 3E58    		ld a, 'X'
+0130: CD8501  		call _fifo_put_byte
+0133: 7C      		ld a, h
+0134: CDBD01  		call _print_hex_byte
+0137: 7D      		ld a, l
+0138: CDBD01  		call _print_hex_byte
+              	
+013B: 3A6201  		ld a, (cksum)
+013E: BD      		cp l
+013F: 2010    		jr nz, _error_cksum
+0141: 3A6301  		ld a, (cksum+1)
+0144: BC      		cp h
+0145: 200A    		jr nz, _error_cksum
+0147: 217301  		ld hl, cksum_ok_msg
+014A: CD9E01  		call _fifo_print_str
+014D: 2A5E01  		ld hl, (addr)
+0150: E9      		jp (hl)			; jump to downloaded code
+              	
+0151:         	_error_cksum:
+0151: 216401  		ld hl, cksum_error_msg
+0154: CD9E01  		call _fifo_print_str
+0157: C3BC00  		jp _ram_entry
+              	
+015A:         	_loop_forever:
+015A: 76      		halt
+015B: C35A01  		jp _loop_forever
+              	
+015E: 0000    	addr:	.word 0
+0160: 0000    	size:	.word 0
+0162: 0000    	cksum:	.word 0
+              	
+0164: 42414420	cksum_error_msg: .ascii "BAD CHKSUM", 0Ah, 0Dh, 0Ah, 0Dh, 00h
+0168: 43484B53	
+016C: 554D0A0D	
+0170: 0A0D00  	
+0173: 434B5355	cksum_ok_msg: .ascii "CKSUM OK", 0Ah, 0Dh, 00h
+0177: 4D204F4B	
+017B: 0A0D00  	
+              	
+017E:         	_fifo_await_usb_config:
+017E: DB01    		in a, (1)
+0180: E604    		and 4
+0182: 20FA    		jr nz, _fifo_await_usb_config
+0184: C9      		ret
+              	
+0185:         	_fifo_put_byte:
+0185: 0E01    		ld c, 1
+0187:         	_await_txe:
+0187: ED40    		in b, (c)
+0189: CB48    		bit 1, b
+018B: 20FA    		jr nz, _await_txe
+018D: D300    		out (0), a
+018F: C9      		ret
+              	
+0190:         	_fifo_get_byte:
+0190: 0E01    		ld c, 1
+0192:         	_await_rxf:
+0192: ED40    		in b, (c)
+0194: CB40    		bit 0, b
+0196: 20FA    		jr nz, _await_rxf
+0198: DB00    		in a, (0)
+019A: CDBD01  		call _print_hex_byte
+019D: C9      		ret
+              	
+019E:         	_fifo_print_str:
+019E: 7E      		ld a, (hl)
+019F: B7      		or a
+01A0: 2806    		jr z, _fifo_print_str_exit
+01A2: CD8501  		call _fifo_put_byte
+01A5: 23      		inc hl
+01A6: 18F6    		jr _fifo_print_str
+01A8:         	_fifo_print_str_exit:
+01A8: C9      		ret
+              	
+01A9:         	_ram_error_upper:
+01A9: 3E55    		ld a, 'U'
+01AB: 31FF7F  		ld sp, 07FFFh
+01AE: CD8501  		call _fifo_put_byte
+01B1: 18F6    		jr _ram_error_upper
+              	
+01B3:         	_ram_error_lower:
+01B3: 3E4C    		ld a, 'L'
+01B5: 31FFFF  		ld sp, 0FFFFh
+01B8: CD85F1  		call 0F000h + _fifo_put_byte
+01BB: 18F6    		jr _ram_error_lower
+              	
+01BD:         	_print_hex_byte:
+01BD: F5      		push af
+01BE: CB3F    			srl a
+01C0: CB3F    			srl a
+01C2: CB3F    			srl a
+01C4: CB3F    			srl a
+01C6: C630    			add '0'
+01C8: FE39    			cp '9'
+01CA: FAD101  			jp m, no_hex1
+01CD: 2802    			jr z, no_hex1
+01CF: C607    			add 'A'-'9'-1
+01D1:         	no_hex1:
+01D1: CD8501  			call _fifo_put_byte
+01D4: F1      		pop af
+01D5: F5      		push af
+01D6: E60F    			and 0Fh
+01D8: C630    			add '0'
+01DA: FE39    			cp '9'
+01DC: FAE301  			jp m, no_hex2
+01DF: 2802    			jr z, no_hex2
+01E1: C607    			add 'A'-'9'-1
+01E3:         	no_hex2:
+01E3: CD8501  			call _fifo_put_byte
+01E6: 3E20    			ld a, ' '
+01E8: CD8501  			call _fifo_put_byte
+01EB: F1      		pop af
+01EC: C9      		ret
+              	
+01ED: FFFFFFFF	.ds 0x800 - $
+01F1: FF...   	
+              	.end
+
+
+total time: 0.0009 sec.
+no errors

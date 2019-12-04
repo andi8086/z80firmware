@@ -1,0 +1,10 @@
+Each binary file that is uploaded to the Z80 has the following 6 byte
+header:
+
+Byte 0:		Target Address LSB
+Byte 1:		Target Address MSB
+Byte 2:		Size-1 LSB
+Byte 3:		Size-1 MSB
+Byte 4:		CKSUM bits 7..0
+Byte 5:		CKSUM bits 15..8
+
