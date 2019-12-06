@@ -1,0 +1,455 @@
+     1                  ;*****************************************************
+     2                  ;*                                                   *
+     3                  ;*      SECTOR DEBLOCKING ALGORITHMS FOR CP/M 2.0    *
+     4                  ;*                                                   *
+     5                  ;*****************************************************
+     6                  ;
+     7                  ;	UTILITY MACRO TO COMPUTE SECTOR MASK
+     8                  SMASK	MACRO	HBLK
+     9                  ;;	COMPUTE LOG2(HBLK), RETURN @X AS RESULT
+    10                  ;;	(2 ** @X = HBLK ON RETURN)
+    11                  @Y	SET	HBLK
+    12                  @X	SET	0
+    13                  ;;	COUNT RIGHT SHIFTS OF @Y UNTIL = 1
+    14                  	REPT	8
+    15                  	IF	@Y = 1
+    16                  	EXITM
+    17                  	ENDIF
+    18                  ;;	@Y IS NOT 1, SHIFT RIGHT ONE POSITION
+    19                  @Y	SET	@Y SHR 1
+    20                  @X	SET	@X + 1
+    21                  	ENDM
+    22                  	ENDM
+    23                  ;
+    24                  ;*****************************************************
+    25                  ;*                                                   *
+    26                  ;*         CP/M TO HOST DISK CONSTANTS               *
+    27                  ;*                                                   *
+    28                  ;*****************************************************
+<a name="Line_29">    29   0800 =         BLKSIZ	EQU	2048		;CP/M ALLOCATION SIZE</a>
+    30   0200 =         HSTSIZ	EQU	512		;HOST DISK SECTOR SIZE
+    31   0014 =         HSTSPT	EQU	20		;HOST DISK SECTORS/TRK
+    32   0004 =         HSTBLK	EQU	HSTSIZ/128	;CP/M SECTS/HOST BUFF
+    33   0050 =         CPMSPT	EQU	HSTBLK * HSTSPT	;CP/M SECTORS/TRACK
+    34   0003 =         SECMSK	EQU	HSTBLK-1	;SECTOR MASK
+    35                  	SMASK	HSTBLK		;COMPUTE SECTOR MASK
+    36   0002 =         SECSHF	EQU	@X		;LOG2(HSTBLK)
+    37                  ;
+    38                  ;*****************************************************
+    39                  ;*                                                   *
+    40                  ;*        BDOS CONSTANTS ON ENTRY TO WRITE           *
+    41                  ;*                                                   *
+    42                  ;*****************************************************
+    43   0000 =         WRALL	EQU	0		;WRITE TO ALLOCATED
+    44   0001 =         WRDIR	EQU	1		;WRITE TO DIRECTORY
+    45   0002 =         WRUAL	EQU	2		;WRITE TO UNALLOCATED
+    46                  ;
+    47                  ;*****************************************************
+    48                  ;*                                                   *
+    49                  ;*	THE BDOS ENTRY POINTS GIVEN BELOW SHOW THE   *
+    50                  ;*      CODE WHICH IS RELEVANT TO DEBLOCKING ONLY.   *
+    51                  ;*                                                   *
+    52                  ;*****************************************************
+    53                  ;
+    54                  ;	DISKDEF MACRO, OR HAND CODED TABLES GO HERE
+    55   0000 =         DPBASE	EQU	$		;DISK PARAM BLOCK BASE
+    56                  ;
+<a name="Line_57>    57                  BOOT:</a>
+    58                  WBOOT:
+    59                  	;ENTER HERE ON SYSTEM BOOT TO INITIALIZE
+    60   0000 AF        	XRA	A		;0 TO ACCUMULATOR
+    61   0001 326A01    	STA	HSTACT		;HOST BUFFER INACTIVE
+    62   0004 326C01    	STA	UNACNT		;CLEAR UNALLOC COUNT
+    63   0007 C9        	RET
+    64                  ;
+<a name="Line_65>    65                  HOME:</a>
+    66                  	;HOME THE SELECTED DISK
+    67                  HOME:
+    68   0008 3A6B01    	LDA	HSTWRT	;CHECK FOR PENDING WRITE
+    69   000B B7        	ORA	A
+    70   000C C21200    	JNZ	HOMED
+    71   000F 326A01    	STA	HSTACT	;CLEAR HOST ACTIVE FLAG
+    72                  HOMED:
+    73   0012 C9        	RET
+    74                  ;
+    75                  SELDSK:
+    76                  	;SELECT DISK
+    77   0013 79        	MOV	A,C		;SELECTED DISK NUMBER
+    78   0014 326101    	STA	SEKDSK		;SEEK DISK NUMBER
+    79   0017 6F        	MOV	L,A		;DISK NUMBER TO HL
+    80   0018 2600      	MVI	H,0
+    81                  	REPT	4		;MULTIPLY BY 16
+    82                  	DAD	H
+    83                  	ENDM
+    84   001A+29        	DAD	H
+    85   001B+29        	DAD	H
+    86   001C+29        	DAD	H
+    87   001D+29        	DAD	H
+    88   001E 110000    	LXI	D,DPBASE	;BASE OF PARM BLOCK
+    89   0021 19        	DAD	D		;HL=.DPB(CURDSK)
+    90   0022 C9        	RET
+    91                  ;
+    92                  SETTRK:
+    93                  	;SET TRACK GIVEN BY REGISTERS BC
+    94   0023 60        	MOV	H,B
+    95   0024 69        	MOV	L,C
+    96   0025 226201    	SHLD	SEKTRK		;TRACK TO SEEK
+    97   0028 C9        	RET
+    98                  ;
+    99                  SETSEC:
+   100                  	;SET SECTOR GIVEN BY REGISTER C 
+   101   0029 79        	MOV	A,C
+   102   002A 326401    	STA	SEKSEC		;SECTOR TO SEEK
+   103   002D C9        	RET
+   104                  ;
+   105                  SETDMA:
+   106                  	;SET DMA ADDRESS GIVEN BY BC
+   107   002E 60        	MOV	H,B
+   108   002F 69        	MOV	L,C
+   109   0030 227501    	SHLD	DMAADR
+<a name="Line_110">   110   0033 C9        	RET</a>
+   111                  ;
+   112                  SECTRAN:
+   113                  	;TRANSLATE SECTOR NUMBER BC
+   114   0034 60        	MOV	H,B
+   115   0035 69        	MOV	L,C
+   116   0036 C9        	RET
+   117                  ;
+   118                  ;*****************************************************
+   119                  ;*                                                   *
+   120                  ;*	THE READ ENTRY POINT TAKES THE PLACE OF      *
+   121                  ;*	THE PREVIOUS BIOS DEFINTION FOR READ.        *
+   122                  ;*                                                   *
+   123                  ;*****************************************************
+   124                  READ:
+<a name="Line_125">   125                  	;READ THE SELECTED CP/M SECTOR</a>
+   126   0037 AF        	XRA	A
+   127   0038 326C01    	STA	UNACNT
+   128   003B 3E01      	MVI	A,1
+   129   003D 327301    	STA	READOP		;READ OPERATION
+   130   0040 327201    	STA	RSFLAG		;MUST READ DATA
+   131   0043 3E02      	MVI	A,WRUAL
+   132   0045 327401    	STA	WRTYPE		;TREAT AS UNALLOC
+   133   0048 C3B600    	JMP	RWOPER		;TO PERFORM THE READ
+   134                  ;
+   135                  ;*****************************************************
+   136                  ;*                                                   *
+   137                  ;*	THE WRITE ENTRY POINT TAKES THE PLACE OF     *
+   138                  ;*	THE PREVIOUS BIOS DEFINTION FOR WRITE.       *
+   139                  ;*                                                   *
+   140                  ;*****************************************************
+   141                  WRITE:
+   142                  	;WRITE THE SELECTED CP/M SECTOR
+   143   004B AF        	XRA	A		;0 TO ACCUMULATOR
+   144   004C 327301    	STA	READOP		;NOT A READ OPERATION
+   145   004F 79        	MOV	A,C		;WRITE TYPE IN C
+   146   0050 327401    	STA	WRTYPE
+   147   0053 FE02      	CPI	WRUAL		;WRITE UNALLOCATED?
+   148   0055 C26F00    	JNZ	CHKUNA		;CHECK FOR UNALLOC
+   149                  ;
+   150                  ;	WRITE TO UNALLOCATED, SET PARAMETERS
+   151   0058 3E10      	MVI	A,BLKSIZ/128	;NEXT UNALLOC RECS
+   152   005A 326C01    	STA	UNACNT
+   153   005D 3A6101    	LDA	SEKDSK		;DISK TO SEEK
+   154   0060 326D01    	STA	UNADSK		;UNADSK = SEKDSK
+   155   0063 2A6201    	LHLD	SEKTRK
+   156   0066 226E01    	SHLD	UNATRK		;UNATRK = SECTRK
+   157   0069 3A6401    	LDA	SEKSEC
+   158   006C 327001    	STA	UNASEC		;UNASEC = SEKSEC
+   159                  ;
+   160                  CHKUNA:
+   161                  	;CHECK FOR WRITE TO UNALLOCATED SECTOR
+   162   006F 3A6C01    	LDA	UNACNT		;ANY UNALLOC REMAIN?
+   163   0072 B7        	ORA	A
+   164   0073 CAAE00    	JZ	ALLOC		;SKIP IF NOT
+   165                  ;
+   166                  ;	MORE UNALLOCATED RECORDS REMAIN
+   167   0076 3D        	DCR	A		;UNACNT = UNACNT-1
+   168   0077 326C01    	STA	UNACNT
+   169   007A 3A6101    	LDA	SEKDSK		;SAME DISK?
+   170   007D 216D01    	LXI	H,UNADSK
+   171   0080 BE        	CMP	M		;SEKDSK = UNADSK?
+   172   0081 C2AE00    	JNZ	ALLOC		;SKIP IF NOT
+   173                  ;
+   174                  ;	DISKS ARE THE SAME
+   175   0084 216E01    	LXI	H,UNATRK
+   176   0087 CD5301    	CALL	SEKTRKCMP	;SEKTRK = UNATRK?
+   177   008A C2AE00    	JNZ	ALLOC		;SKIP IF NOT
+   178                  ;
+   179                  ;	TRACKS ARE THE SAME
+   180   008D 3A6401    	LDA	SEKSEC		;SAME SECTOR?
+   181   0090 217001    	LXI	H,UNASEC
+   182   0093 BE        	CMP	M		;SEKSEC = UNASEC?
+   183   0094 C2AE00    	JNZ	ALLOC		;SKIP IF NOT
+   184                  ;
+   185                  ;	MATCH, MOVE TO NEXT SECTOR FOR FUTURE REF
+   186   0097 34        	INR	M		;UNASEC = UNASEC+1
+   187   0098 7E        	MOV	A,M		;END OF TRACK?
+   188   0099 FE50      	CPI	CPMSPT		;COUNT CP/M SECTORS
+   189   009B DAA700    	JC	NOOVF		;SKIP IF NO OVERFLOW
+   190                  ;
+   191                  ;	OVERFLOW TO NEXT TRACK
+   192   009E 3600      	MVI	M,0		;UNASEC = 0
+   193   00A0 2A6E01    	LHLD	UNATRK
+   194   00A3 23        	INX	H
+   195   00A4 226E01    	SHLD	UNATRK		;UNATRK = UNATRK+1
+   196                  ;
+   197                  NOOVF:
+   198                  	;MATCH FOUND, MARK AS UNNECESSARY READ
+   199   00A7 AF        	XRA	A		;0 TO ACCUMULATOR
+   200   00A8 327201    	STA	RSFLAG		;RSFLAG = 0
+   201   00AB C3B600    	JMP	RWOPER		;TO PERFORM THE WRITE
+   202                  ;
+   203                  ALLOC:
+   204                  	;NOT AN UNALLOCATED RECORD, REQUIRES PRE-READ
+   205   00AE AF        	XRA	A		;0 TO ACCUM
+   206   00AF 326C01    	STA	UNACNT		;UNACNT = 0
+   207   00B2 3C        	INR	A		;1 TO ACCUM
+   208   00B3 327201    	STA	RSFLAG		;RSFLAG = 1
+   209                  ;
+   210                  ;*****************************************************
+   211                  ;*                                                   *
+   212                  ;*	COMMON CODE FOR READ AND WRITE FOLLOWS       *
+   213                  ;*                                                   *
+   214                  ;*****************************************************
+   215                  RWOPER:
+   216                  	;ENTER HERE TO PERFORM THE READ/WRITE
+   217   00B6 AF        	XRA	A		;ZERO TO ACCUM
+   218   00B7 327101    	STA	ERFLAG		;NO ERRORS (YET)
+   219   00BA 3A6401    	LDA	SEKSEC		;COMPUTE HOST SECTOR
+   220                  	REPT	SECSHF
+   221                  	ORA	A		;CARRY = 0
+   222                  	RAR			;SHIFT RIGHT
+   223                  	ENDM
+   224   00BD+B7        	ORA	A		;CARRY = 0
+   225   00BE+1F        	RAR			;SHIFT RIGHT
+   226   00BF+B7        	ORA	A		;CARRY = 0
+   227   00C0+1F        	RAR			;SHIFT RIGHT
+   228   00C1 326901    	STA	SEKHST		;HOST SECTOR TO SEEK
+   229                  ;
+   230                  ;	ACTIVE HOST SECTOR?
+   231   00C4 216A01    	LXI	H,HSTACT	;HOST ACTIVE FLAG
+   232   00C7 7E        	MOV	A,M
+   233   00C8 3601      	MVI	M,1		;ALWAYS BECOMES 1
+   234   00CA B7        	ORA	A		;WAS IT ALREADY?
+   235   00CB CAF200    	JZ	FILHST		;FILL HOST IF NOT
+   236                  ;
+   237                  ;	HOST BUFFER ACTIVE, SAME AS SEEK BUFFER?
+   238   00CE 3A6101    	LDA	SEKDSK
+   239   00D1 216501    	LXI	H,HSTDSK	;SAME DISK?
+   240   00D4 BE        	CMP	M		;SEKDSK = HSTDSK?
+   241   00D5 C2EB00    	JNZ	NOMATCH
+   242                  ;
+   243                  ;	SAME DISK, SAME TRACK?
+   244   00D8 216601    	LXI	H,HSTTRK
+   245   00DB CD5301    	CALL	SEKTRKCMP	;SEKTRK = HSTTRK?
+   246   00DE C2EB00    	JNZ	NOMATCH
+   247                  ;
+   248                  ;	SAME DISK, SAME TRACK, SAME BUFFER?
+   249   00E1 3A6901    	LDA	SEKHST
+   250   00E4 216801    	LXI	H,HSTSEC	;SEKHST = HSTSEC?
+   251   00E7 BE        	CMP	M
+   252   00E8 CA0F01    	JZ	MATCH		;SKIP IF MATCH
+   253                  ;
+   254                  NOMATCH:
+   255                  	;PROPER DISK, BUT NOT CORRECT SECTOR
+   256   00EB 3A6B01    	LDA	HSTWRT		;HOST WRITTEN?
+   257   00EE B7        	ORA	A
+   258   00EF C45F01    	CNZ	WRITEHST	;CLEAR HOST BUFF
+   259                  ;
+   260                  FILHST:
+   261                  	;MAY HAVE TO FILL THE HOST BUFFER
+   262   00F2 3A6101    	LDA	SEKDSK
+   263   00F5 326501    	STA	HSTDSK
+   264   00F8 2A6201    	LHLD	SEKTRK
+   265   00FB 226601    	SHLD	HSTTRK
+   266   00FE 3A6901    	LDA	SEKHST
+   267   0101 326801    	STA	HSTSEC
+   268   0104 3A7201    	LDA	RSFLAG		;NEED TO READ?
+   269   0107 B7        	ORA	A
+   270   0108 C46001    	CNZ	READHST		;YES, IF 1
+   271   010B AF        	XRA	A		;0 TO ACCUM
+   272   010C 326B01    	STA	HSTWRT		;NO PENDING WRITE
+   273                  ;
+   274                  MATCH:
+   275                  	;COPY DATA TO OR FROM BUFFER
+   276   010F 3A6401    	LDA	SEKSEC		;MASK BUFFER NUMBER
+   277   0112 E603      	ANI	SECMSK		;LEAST SIGNIF BITS
+   278   0114 6F        	MOV	L,A		;READY TO SHIFT
+   279   0115 2600      	MVI	H,0		;DOUBLE COUNT
+   280                  	REPT	7		;SHIFT LEFT 7
+   281                  	DAD	H
+   282                  	ENDM
+   283   0117+29        	DAD	H
+   284   0118+29        	DAD	H
+   285   0119+29        	DAD	H
+   286   011A+29        	DAD	H
+   287   011B+29        	DAD	H
+   288   011C+29        	DAD	H
+   289   011D+29        	DAD	H
+   290                  ;	HL HAS RELATIVE HOST BUFFER ADDRESS
+   291   011E 117701    	LXI	D,HSTBUF
+   292   0121 19        	DAD	D		;HL = HOST ADDRESS
+   293   0122 EB        	XCHG			;NOW IN DE
+   294   0123 2A7501    	LHLD	DMAADR		;GET/PUT CP/M DATA
+   295   0126 0E80      	MVI	C,128		;LENGTH OF MOVE
+   296   0128 3A7301    	LDA	READOP		;WHICH WAY?
+   297   012B B7        	ORA	A
+   298   012C C23501    	JNZ	RWMOVE		;SKIP IF READ
+   299                  ;
+   300                  ;	WRITE OPERATION, MARK AND SWITCH DIRECTION
+   301   012F 3E01      	MVI	A,1
+   302   0131 326B01    	STA	HSTWRT		;HSTWRT = 1
+   303   0134 EB        	XCHG			;SOURCE/DEST SWAP
+   304                  ;
+   305                  RWMOVE:
+   306                  	;C INITIALLY 128, DE IS SOURCE, HL IS DEST
+   307   0135 1A        	LDAX	D		;SOURCE CHARACTER
+   308   0136 13        	INX	D
+   309   0137 77        	MOV	M,A		;TO DEST
+   310   0138 23        	INX	H
+   311   0139 0D        	DCR	C		;LOOP 128 TIMES
+   312   013A C23501    	JNZ	RWMOVE
+   313                  ;
+   314                  ;	DATA HAS BEEN MOVED TO/FROM HOST BUFFER
+   315   013D 3A7401    	LDA	WRTYPE		;WRITE TYPE
+   316   0140 FE01      	CPI	WRDIR		;TO DIRECTORY?
+   317   0142 3A7101    	LDA	ERFLAG		;IN CASE OF ERRORS
+   318   0145 C0        	RNZ			;NO FURTHER PROCESSING
+   319                  ;
+   320                  ;	CLEAR HOST BUFFER FOR DIRECTORY WRITE
+   321   0146 B7        	ORA	A		;ERRORS?
+   322   0147 C0        	RNZ			;SKIP IF SO
+   323   0148 AF        	XRA	A		;0 TO ACCUM
+   324   0149 326B01    	STA	HSTWRT		;BUFFER WRITTEN
+   325   014C CD5F01    	CALL	WRITEHST
+   326   014F 3A7101    	LDA	ERFLAG
+   327   0152 C9        	RET
+   328                  ;
+   329                  ;*****************************************************
+   330                  ;*                                                   *
+   331                  ;*	UTILITY SUBROUTINE FOR 16-BIT COMPARE        *
+   332                  ;*                                                   *
+   333                  ;*****************************************************
+   334                  SEKTRKCMP:
+   335                  	;HL = .UNATRK OR .HSTTRK, COMPARE WITH SEKTRK
+   336   0153 EB        	XCHG
+   337   0154 216201    	LXI	H,SEKTRK
+   338   0157 1A        	LDAX	D		;LOW BYTE COMPARE
+   339   0158 BE        	CMP	M		;SAME?
+   340   0159 C0        	RNZ			;RETURN IF NOT
+   341                  ;	LOW BYTES EQUAL, TEST HIGH 1S
+   342   015A 13        	INX	D
+   343   015B 23        	INX	H
+   344   015C 1A        	LDAX	D
+   345   015D BE        	CMP	M	;SETS FLAGS
+   346   015E C9        	RET
+   347                  ;
+   348                  ;*****************************************************
+   349                  ;*                                                   *
+   350                  ;*	WRITEHST PERFORMS THE PHYSICAL WRITE TO      *
+   351                  ;*	THE HOST DISK, READHST READS THE PHYSICAL    *
+   352                  ;*	DISK.					     *
+   353                  ;*                                                   *
+   354                  ;*****************************************************
+   355                  WRITEHST:
+   356                  	;HSTDSK = HOST DISK #, HSTTRK = HOST TRACK #,
+   357                  	;HSTSEC = HOST SECT #. WRITE "HSTSIZ" BYTES
+   358                  	;FROM HSTBUF AND RETURN ERROR FLAG IN ERFLAG.
+   359                  	;RETURN ERFLAG NON-ZERO IF ERROR
+   360   015F C9        	RET
+   361                  ;
+   362                  READHST:
+   363                  	;HSTDSK = HOST DISK #, HSTTRK = HOST TRACK #,
+   364                  	;HSTSEC = HOST SECT #. READ "HSTSIZ" BYTES
+   365                  	;INTO HSTBUF AND RETURN ERROR FLAG IN ERFLAG.
+   366   0160 C9        	RET
+   367                  ;
+   368                  ;*****************************************************
+   369                  ;*                                                   *
+   370                  ;*	UNITIALIZED RAM DATA AREAS		     *
+   371                  ;*                                                   *
+   372                  ;*****************************************************
+   373                  ;
+   374   0161           SEKDSK:	DS	1		;SEEK DISK NUMBER
+   375   0162           SEKTRK:	DS	2		;SEEK TRACK NUMBER
+   376   0164           SEKSEC:	DS	1		;SEEK SECTOR NUMBER
+   377                  ;
+   378   0165           HSTDSK:	DS	1		;HOST DISK NUMBER
+   379   0166           HSTTRK:	DS	2		;HOST TRACK NUMBER
+   380   0168           HSTSEC:	DS	1		;HOST SECTOR NUMBER
+   381                  ;
+   382   0169           SEKHST:	DS	1		;SEEK SHR SECSHF
+   383   016A           HSTACT:	DS	1		;HOST ACTIVE FLAG
+   384   016B           HSTWRT:	DS	1		;HOST WRITTEN FLAG
+   385                  ;
+   386   016C           UNACNT:	DS	1		;UNALLOC REC CNT
+   387   016D           UNADSK:	DS	1		;LAST UNALLOC DISK
+   388   016E           UNATRK:	DS	2		;LAST UNALLOC TRACK
+   389   0170           UNASEC:	DS	1		;LAST UNALLOC SECTOR
+   390                  ;
+   391   0171           ERFLAG:	DS	1		;ERROR REPORTING
+   392   0172           RSFLAG:	DS	1		;READ SECTOR FLAG
+   393   0173           READOP:	DS	1		;1 IF READ OPERATION
+   394   0174           WRTYPE:	DS	1		;WRITE OPERATION TYPE
+   395   0175           DMAADR:	DS	2		;LAST DMA ADDRESS
+   396   0177           HSTBUF:	DS	HSTSIZ		;HOST BUFFER
+   397                  ;
+   398                  ;*****************************************************
+   399                  ;*                                                   *
+   400                  ;*	THE ENDEF MACRO INVOCATION GOES HERE	     *
+   401                  ;*                                                   *
+   402                  ;*****************************************************
+   403   0377           	END
+ALLOC            00AE   164   172   177   183   203#
+BLKSIZ           0800    29#  151 
+BOOT             0000    57#
+CHKUNA           006F   148   160#
+CPMSPT           0050    33#  188 
+DMAADR           0175   109   294   395#
+DPBASE           0000    55#   88 
+ERFLAG           0171   218   317   326   391#
+FILHST           00F2   235   260#
+HOME             0008    65#   67#
+HOMED            0012    70    72#
+HSTACT           016A    61    71   231   383#
+HSTBLK           0004    32#   33    34    35 
+HSTBUF           0177   291   396#
+HSTDSK           0165   239   263   378#
+HSTSEC           0168   250   267   380#
+HSTSIZ           0200    30#   32   396 
+HSTSPT           0014    31#   33 
+HSTTRK           0166   244   265   379#
+HSTWRT           016B    68   256   272   302   324   384#
+MATCH            010F   252   274#
+NOMATCH          00EB   241   246   254#
+NOOVF            00A7   189   197#
+READ             0037   124#
+READHST          0160   270   362#
+READOP           0173   129   144   296   393#
+RSFLAG           0172   130   200   208   268   392#
+RWMOVE           0135   298   305#  312 
+RWOPER           00B6   133   201   215#
+SECMSK           0003    34#  277 
+SECSHF           0002    36#  220 
+SECTRAN          0034   112#
+SEKDSK           0161    78   153   169   238   262   374#
+SEKHST           0169   228   249   266   382#
+SEKSEC           0164   102   157   180   219   276   376#
+SEKTRK           0162    96   155   264   337   375#
+SEKTRKCMP        0153   176   245   334#
+SELDSK           0013    75#
+SETDMA           002E   105#
+SETSEC           0029    99#
+SETTRK           0023    92#
+UNACNT           016C    62   127   152   162   168   206   386#
+UNADSK           016D   154   170   387#
+UNASEC           0170   158   181   389#
+UNATRK           016E   156   175   193   195   388#
+WBOOT            0000    58#
+WRALL            0000    43#
+WRDIR            0001    44#  316 
+WRITE            004B   141#
+WRITEHST         015F   258   325   355#
+WRTYPE           0174   132   146   315   394#
+WRUAL            0002    45#  131   147 

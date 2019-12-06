@@ -41,7 +41,12 @@ DEL	EQU	7FH		;rubout
 ;
 	ORG	(MEM-7)*1024
 
-CBASE:	JP	COMMAND		;execute command processor (ccp).
+CBASE:  LD	DE, WELCOME_MSG
+	CALL	PRTSTR
+	LD	DE, COPYRIGHT
+	CALL	PRTSTR
+	LD	C, 00000000b	; UUUUDDDD, u=user, d=drive
+	JP	COMMAND		;execute command processor (ccp).
 	JP	CLEARBUF	;entry to empty input buffer before starting ccp.
 
 ;
@@ -50,8 +55,9 @@ CBASE:	JP	COMMAND		;execute command processor (ccp).
 ;
 INBUFF:	DEFB	127		;length of input buffer.
 	DEFB	0		;current length of contents.
+COPYRIGHT:
 	DEFB	'Copyright'
-	DEFB	' 1979 (c) by Digital Research      '
+	DEFB	' 1979 (c) by Digital Research   ',0Ah,0Dh,'$'
 	DEFB	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 	DEFB	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 	DEFB	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
@@ -3870,4 +3876,6 @@ chk01: defs 16
 chk02: defs 16
 chk03: defs 16
 
+WELCOME_MSG:	.ascii 0Ah,0Dh,"ReichelZ80 BIOS 0.1 (c) 2019 A.J.Reichel",0Ah,0Dh
+		.ascii "CP/M, Version 2.2", 0Ah, 0Dh, "$"
 

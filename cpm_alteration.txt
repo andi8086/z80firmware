@@ -1,0 +1,1564 @@
+
+  Section 6
+
+
+  CP/M Alteration
+
+------------------------------------------------------------------------
+
+*Table of Contents*
+
+6.1 Introduction <#Section_6.1>
+6.2 First-level System Regeneration <#Section_6.2>
+6.3 Second-level System Regeneration <#Section_6.3>
+6.4 Sample GETSYS and PUTSYS Program <#Section_6.4>
+6.5 Disk Organization <#Section_6.5>
+6.6 The BIOS Entry Points <#Section_6.6>
+6.7 A Sample BIOS <#Section_6.7>
+6.8 A Sample Cold Start Loader <#Section_6.8>
+6.9 Reserved Locations in Page Zero <#Section_6.9>
+6.10 Disk Parameter Tables <#Section_6.10>
+6.11 The DISKDEF Macro Library <#Section_6.11>
+6.12 Sector Blocking and Deblocking <#Section_6.12>
+
+*Tables*
+
+6-1 Standard Memory Size Values <#Table_6-1>
+6-2 Common Values for CP/M Systems <#Table_6-2>
+6-3 CP/M Disk Sector Allocation <#Table_6-3>
+6-4 IOBYTE Field Values <#Table_6-4>
+6-5 BIOS Entry Points <#Table_6-5>
+6-6 Reserved Locations in Page Zero <#Table_6-6>
+6-7 Disk Parameter Headers <#Table_6-7>
+6-8 BSH and BLM Values <#Table_6-8>
+6-9 EXM Values <#Table_6-9>
+6-10 BLS Tabulation <#Table_6-10>
+
+*Figures*
+
+6-1 IOBYTE Fields <#Figure_6-1>
+6-2 Disk Parameter Header Format <#Figure_6-2>
+6-3 Disk Parameter Header Table <#Figure_6-3>
+6-4 Disk Parameter Block Format <#Figure_6-4>
+6-5 AL0 and AL1 <#Figure_6-5>
+
+*Listings*
+
+6-1 GETSYS Program <#Listing_6-1>
+6-2 BIOS Entry Points <#Listing_6-2>
+
+------------------------------------------------------------------------
+
+
+  6.1 Introduction
+
+The standard CP/M system assumes operation on an Intel MDS-800
+microcomputer development system, but is designed so you can alter a
+specific set of subroutines that define the hardware operating environment.
+
+Although standard CP/M 2 is configured for single-density floppy disks,
+field alteration features allow adaptation to a wide variety of disk
+subsystems from single drive minidisks to high- capacity, hard disk
+systems. To simplify the following adaptation process, it is assumed
+that CP/M 2 is first configured for single-density floppy disks where
+minimal editing and debugging tools are available. If an earlier version
+of CP/M is available, the customizing process is eased considerably. In
+this latter case, you might want to review the system generation process
+and skip to later sections that discuss system alteration for
+nonstandard disk systems.
+
+To achieve device independence, CP/M is separated into three distinct
+modules:
+
+  * BIOS is the Basic I/O System, which is environment dependent.
+  * BDOS is the Basic Disk Operating System, which is not dependent upon
+    the hardware configuration.
+  * CCP is the Console Command Processor, which uses the BDOS. 
+
+Of these modules, only the BIOS is dependent upon the particular
+hardware. You can patch the distribution version of CP/M to provide a
+new BIOS that provides a customized interface between the remaining CP/M
+modules and the hardware system. This document provides a step-by-step
+procedure for patching a new BIOS into CP/M.
+
+All disk-dependent portions of CP/M 2 are placed into a BIOS, a resident
+disk parameter block, which is either hand coded or produced
+automatically using the disk definition macro library provided with CP/M
+2. The end user need only specify the maximum number of active disks,
+the starting and ending sector numbers, the data allocation size, the
+maximum extent of the logical disk, directory size information, and
+reserved track values. The macros use this information to generate the
+appropriate tables and table references for use during CP/M 2 operation.
+Deblocking information is provided, which aids in assembly or
+disassembly of sector sizes that are multiples of the fundamental
+128-byte data unit, and the system alteration manual includes general
+purpose subroutines that use the deblocking information to take
+advantage of larger sector sizes. Use of these subroutines, together
+with the table-drive data access algorithms, makes CP/M 2 a universal
+data management system.
+
+File expansion is achieved by providing up to 512 logical file extents,
+where each logical extent contains 16K bytes of data. CP/M 2 is
+structured, however, so that as much as 128K bytes of data are addressed
+by a single physical extent, corresponding to a single directory entry,
+iuaintaining compatibility with previous versions while taking advantage
+of directory space. If CP/M is being tailored to a computer system for
+the first time, the new BIOS requires some simple software development
+and testing. The standard BIOS is listed in Appendix A
+<http://www.gaby.de/cpm/manuals/archive/cpm22htm/axa.htm> and can be
+used as a model for the customized package. A skeletal version of the
+BIOS given in Appendix B
+<http://www.gaby.de/cpm/manuals/archive/cpm22htm/axb.htm> can serve as
+the basis for a modified BIOS.
+
+In addition to the BIOS, you must write a simple memory loader, called
+GETSYS, which brings the operating system into memory. To patch the new
+BIOS into CP/M, you must write the reverse of GETSYS, called PUTSYS,
+which places an altered version of CP/M back onto the disk. PUTSYS can
+be derived from GETSYS by changing the disk read commands into disk
+write commands. Sample skeletal GETSYS and PUTSYS programs are described
+in Section 6.4 <#Section_6.4> and listed in Appendix C
+<http://www.gaby.de/cpm/manuals/archive/cpm22htm/axc.htm>.
+
+To make the CP/M system load automatically, you must also supply a cold
+start loader, similar to the one provided with CP/M, listed in
+Appendices A <http://www.gaby.de/cpm/manuals/archive/cpm22htm/axa.htm>
+and D <http://www.gaby.de/cpm/manuals/archive/cpm22htm/axd.htm>. A
+skeletal form of a cold start loader is given in Appendix E
+<http://www.gaby.de/cpm/manuals/archive/cpm22htm/axe.htm>, which servies
+as a model for the loader.
+
+
+  6.2 First-Level System Regeneration
+
+The procedure to patch the CP/M system is given below. Address
+references in each step are shown with H denoting the hexadecimal radix,
+and are given for a 20K CP/M system. For larger CP/M systems, a bias is
+added to each address that is shown with a +b following it, where b is
+equal to the memory size-20K. Values for b in various standard memory
+sizes are listed in Table 6-1 <#Table_6-1>.
+
+ 
+
+Table 6-1. Standard Memory Size Values Memory Size	Value
+24K	b = 24K - 20K = 4K = 1000H
+32K	b = 32K - 20K = 12K = 3000H
+40K	b = 40K - 20K = 20K = 5000H
+48K	b = 48K - 20K = 28K = 7000H
+56K	b = 56K - 20K = 36K = 9000H
+62K	b = 62K - 20K = 42K = A800H
+64K	b = 64K - 20K = 44K = B000H
+
+Note that the standard distribution version of CP/M is set for operation
+within a 20K CP/M system. Therefore, you must first bring up the 20K
+CP/M system, then configure it for actual memory size (see Section 6.3
+<#Section_6.3>).
+
+Follow these steps to patch your CP/M system:
+
+ 1. Read Section 6.4 <#Section_6.4> and write a GETSYS program that
+    reads the first two tracks of a disk into memory. The program from
+    the disk must be loaded starting at location 3380H. GETSYS is coded
+    to start at location 100H (base of the TPA) as shown in Appendix C.
+ 2. Test the GETSYS program by reading a blank disk into memory, and
+    check to see that the data has been read properly and that the disk
+    has not been altered in any way by the GETSYS program.
+ 3. Run the GETSYS program using an initialized CP/M disk to see if
+    GETSYS loads CP/M starting at 3380H (the operating system actually
+    starts 128 bytes later at 3400H).
+ 4. Read Section 6.4 <#Section_6.4> and write the PUTSYS program. This
+    writes memory starting at 3380H back onto the first two tracks of
+    the disk. The PUTSYS program should be located at 200H, as shown in
+    Appendix C <http://www.gaby.de/cpm/manuals/archive/cpm22htm/axc.htm>.
+ 5. Test the PUTSYS program using a blank, uninitialized disk by writing
+    a portion of memory to the first two tracks; clear memory and read
+    it back using GETSYS. Test PUTSYS completely, because this program
+    will be used to alter CP/M on disk.
+ 6. Study Sections 6.5 <#Section_6.5>, 6.6 <#Section_6.6>, and 6.7
+    <#Section_6.7> along with the distribution version of the BIOS given
+    in Appendix A
+    <http://www.gaby.de/cpm/manuals/archive/cpm22htm/axa.htm> and write
+    a simple version that performs a similar function for the customized
+    environment. Use the program given in Appendix B
+    <http://www.gaby.de/cpm/manuals/archive/cpm22htm/axb.htm> as a
+    model. Call this new BIOS by name CBIOS (customized BIOS). Implement
+    only the primitive disk operations on a single drive and simple
+    console input/output functions in this phase.
+ 7. Test CBIOS completely to ensure that it properly performs console
+    character I/O and disk reads and writes. Be careful to ensure that
+    no disk write operations occur during read operations and check that
+    the proper track and sectors are addressed on all reads and writes.
+    Failure to make these checks might cause destruction of the
+    initialized CP/M system after it is patched.
+ 8. Referring to Table 6-3 <#Table_6-3> in Section 6.5 <#Section_6.5>,
+    note that the BIOS is placed between locations 4A00H and 4FFFH. Read
+    the CP/M system using GETSYS and replace the BIOS segment by the
+    CBIOS developed in step 6 and tested in step 7. This replacement is
+    done in memory.
+ 9. Use PUTSYS to place the patched memory image of CP/M onto the first
+    two tracks of a blank disk for testing.
+10. Use GETSYS to bring the copied memory image from the test disk back
+    into memory at 3380H and check to ensure that it has loaded back
+    properly (clear memory, 1 if possible, before the load). Upon
+    successful load, branch to the cold start code at location 4A00H.
+    The cold start routine initializes page zero, then jumps to the CCP
+    at location 3400H, which calls the BDOS, which calls the CBIOS. The
+    CCP asks the CBIOS to read sixteen sectors on track 2, and CP/M
+    types A>, the system prompt.
+
+    If difficulties are encountered, use whatever debug facilities are
+    available to trace and breakpoint the CBIOS.
+
+11. Upon completion of step 10, CP/M has prompted the console for a
+    command input. To test the disk write operation, type
+
+             SAVE 1 X.COM
+
+    All commands must be followed by a carriage return. CP/M responds
+    with another prompt after several disk accesses:
+
+             A>
+
+    If it does not, debug the disk write functions and retry.
+
+12. Test the directory command by typing
+
+             DIR
+
+    CP/M responds with
+
+             A:X       COM
+
+13. Test the erase command by typing
+
+             ERA X.COM
+
+    CP/M responds with the A prompt. This is now an operational system
+    that only requires a bootstrap loader to function completely.
+
+14. Write a bootstrap loader that is similar to GETSYS and place it on
+    track 0, sector 1, using PUTSYS (again using the test disk, not the
+    distribution disk). See Sections 6.5 <#Section_6.5> and 6.8
+    <#Section_6.8> for more information on the bootstrap operation.
+15. Retest the new test disk with the bootstrap loader installed by
+    executing steps 11, 12, and 13. Upon completion of these tests, type
+    a CTRL-C. The system executes a warm start, which reboots the
+    system, and types the A prompt.
+16. At this point, there is probably a good version of the customized
+    CP/M system on the test disk. Use GETSYS to load CP/M from the test
+    disk. Remove the test disk, place the distribution disk, or a legal
+    copy, into the drive, and use PUTSYS to replace the distribution
+    version with the customized version. Do not make this replacement if
+    you are unsure of the patch because this step destroys the system
+    that was obtained from Digital Research.
+17. Load the modified CP/M system and test it by typing
+
+            DIR
+
+    CP/M responds with a list of files that are provided on the
+    initialized disk. The file DDT.COM is the memory image for the
+    debugger. Note that from now on, you must always reboot the CP/M
+    system (CTRL-C is sufficient) when the disk is removed and replaced
+    by another disk, unless the new disk is to be Read-Only.
+
+18. Load and test the debugger by typing
+
+            DDT
+
+    See Section 4
+    <http://www.gaby.de/cpm/manuals/archive/cpm22htm/ch4.htm> for
+    operating procedures.
+
+19. Before making further CBIOS modifications, practice using the editor
+    (see Section 2
+    <http://www.gaby.de/cpm/manuals/archive/cpm22htm/ch2.htm>), and
+    assembler (see Section 3
+    <http://www.gaby.de/cpm/manuals/archive/cpm22htm/ch3.htm>). Recode
+    and test the GETSYS, PUTSYS, and CBIOS programs using ED, ASM, and
+    DDT. Code and test a COPY program that does a sector-to-sector copy
+    from one disk to another to obtain back-up copies of the original
+    disk. Read the CP/M Licensing Agreement specifying legal
+    responsibilities when copying the CP/M system. Place the following
+    copyright notice:
+
+            Copyright (c), 1983
+            Digital Research
+
+    on each copy that is made with the COPY program.
+
+20. Modify the CBIOS to include the extra functions for punches,
+    readers, and sign-on messages, and add the facilities for additional
+    disk drives, if desired. These changes can be made with the GETSYS
+    and PUTSYS programs or by referring to the regeneration process in
+    Section 6.3 <#Section_6.3>. 
+
+You should now have a good copy of the customized CP/M system. Although
+the CBIOS portion of CP/M belongs to the user, the modified version
+cannot be legally copied.
+
+It should be noted that the system remains file-compatible with all
+other CP/M systems (assuming media compatibility) which allows transfer
+of nonproprietary software between CP/M users.
+
+
+  6.3 Second-Level System Generation
+
+Once the system is running, the next step is to configure CP/M for the
+desired memory size. Usually, a memory image is first produced with the
+MOVCPM program (system relocator) and then placed into a named disk
+file. The disk file can then be loaded, examined, patched, and replaced
+using the debugger and the system generation program (refer to Section 1
+<http://www.gaby.de/cpm/manuals/archive/cpm22htm/ch1.htm>).
+
+The CBIOS and BOOT are modified using ED and assembled using ASM,
+producing files called CBIOS.HEX and BOOT.HEX, which contain the code
+for CBIOS and BOOT in Intel hex format.
+
+To get the memory image of CP/M into the TPA configured for the desired
+memorv size, type the command:
+
+        MOVCPM xx*
+
+where xx is the memory size in decimal K bytes, for example, 32 for 32K.
+The response is as follows:
+
+        CONSTRUCTING xxK CP/M VERS 2.0
+        READY FOR "SYSGEN" OR
+        "SAVE 34 CPMxx.COM"
+
+An image of CP/M in the TPA is configured for the requested memory size.
+The memory image is at location 0900H through 227FH, that is, the BOOT
+is at 0900H, the CCP is at 980H, the BDOS starts at 1180H, and the BIOS
+is at 1F80H. Note that the memory image has the standard MDS-800 BIOS
+and BOOT on it. It is now necessary to save the memory image in a file
+so that you can patch the CBIOS and CBOOT into it:
+
+        SAVE 34 CPMxx.COM
+
+The memory image created by the MOVCPM program is offset by a negative
+bias so that it loads into the free area of the TPA, and does not
+interfere with the operation of CP/M in higher memory. This memory image
+can be subsequently loaded under DDT and examined or changed in
+preparation for a new generation of the system. DDT is loaded with the
+memory image by typing:
+
+        DDT CPMxx.COM         Loads DDT, then reads the CP/M image.
+
+DDT should respond with the following:
+
+        NEXT PC
+        2300 0100
+        -                     (The DDT prompt)
+
+You can then give the display and disassembly commands to examine
+portions of the memory image between 900H and 227FH. Note, however, that
+to find any particular address within the memory image, you must apply
+the negative bias to the CP/M address to find the actual address. Track
+00, sector 01, is loaded to location 900H (the user should find the cold
+start loader at 900H to 97FH); track 00, sector 02, is loaded into 980H
+(this is the base of the CCP); and so on through the entire CP/M system
+load. In a 20K system, for example, the CCP resides at the CP/M address
+3400H, but is placed into memory at 980H by the SYSGEN program. Thus,
+the negative bias, denoted by n, satisfies
+
+        3400H + n = 980H, or n = 980H - 3400H
+
+Assuming two's complement arithmetic, n = D580H, which can be checked by
+
+        3400H+D580H = 10980H = 0980H (ignoring high-order overflow).
+
+Note that for larger systems, n satisfies
+
+        (3400H + b) + n = 980H, or
+        n = 980H - (3400H + b), or
+        n = D580H - b
+
+The value of n for common CP/M systems is given below.
+
+ 
+
+Table 6-2. Common Values for CP/M Systems Memory Size	BIAS b	Negative
+Offset n
+20K	0000H	D580H - 0000H = D580H
+24K	1000H	D580H - 1000H = C580H
+32K	3000H	D580H - 3000H = A580H
+40K	5000H	D580H - 5000H = 8580H
+48K	7000H	D580H - 7000H = 6580H
+56K	9000H	D580H - 9000H = 4580H
+62K	A800H	D580H - A800H = 2D80H
+64K	B000H	D580H - B000H = 2580H
+
+If you want to locate the address x within the memory image loaded under
+DDT in a 20K system, first type
+
+        Hx,n                     Hexadecimal sum and difference
+
+and DDT responds with the value of x + n (sum) and x - n (difference).
+The first number printed by DDT is the actual memory address in the
+image where the data or code is located. For example, the following DDT
+command:
+
+        H3400,D580
+
+produces 980H as the sum, which is where the CCP is located in the
+memory image under DDT.
+
+Type the L command to disassemble portions of the BIOS located at (4A00H
++ b) - n, which, when one uses the H command, produces an actual address
+of 1F80H. The disassembly command would thus be as follows:
+
+        L1F80
+
+It is now necessary to patch in the CBOOT and CBIOS routines. The BOOT
+resides at location 0900H in the memory image. If the actual load
+address is n, then to calculate the bias (m), type the command:
+
+        H900,n         Subtract load address from target address.
+
+The second number typed by DDT in response to the command is the desired
+bias (in). For example, if the BOOT executes at 0080H, the command
+
+        H900,80
+
+produces
+
+        0980  0880              Sum and difference in hex.
+
+Therefore, the bias in would be 0880H. To read-in the BOOT, give the
+command:
+
+        ICBOOT.HEX             Input file CBOOT.HEX
+
+Then
+
+        Rm               Read CBOOT with a bias of in (= 900H - n).
+
+Examine the CBOOT with
+
+        L900
+
+You are now ready to replace the CBIOS by examining the area at 1F80H,
+where the original version of the CBIOS resides, and then typing
+
+        ICBIOS.HEX              Ready the hex file for loading.
+
+Assume that the CBIOS is being integrated into a 20K CP/M system and
+thus originates at location 4A00H. To locate the CBIOS properly in the
+memory image under DDT, you must apply the negative bias n for a 20K
+system when loading the hex file. This is accomplished by typing
+
+        RD580                    Read the file with bias D580H.
+
+Upon completion of the read, reexamine the area where the CBIOS has been
+loaded (use an L1F80 command) to ensure that it is properly loaded. When
+you are satisfied that the change has been made, return from DDT using a
+CTRL-C or G0 command.
+
+SYSGEN is used to replace the patched memory image back onto a disk (you
+use a test disk until sure of the patch) as shown in the following
+interaction:
+
+ 
+
+SYSGEN
+
+	Start the SYSGEN program.
+
+SYSGEN VERSION 2.0
+
+	Sign-on message from SYSGEN.
+
+SOURCE DRIVE NAME
+(OR RETURN TO SKIP)
+
+	Respond with a carriage return to skip the CP/M read operation because
+the system is already in memory.
+
+DESTINATION DRIVE NAME
+(OR RETURN TO REBOOT)
+
+	Respond with B to write the new system to the disk in drive B.
+
+DESTINATION ON B
+THEN TYPE RETURN
+
+	Place a scratch disk in drive B, then press RETURN.
+
+FUNCTION COMPLETE
+DESTINATION DRIVE NAME
+(OR RETURN TO REBOOT)
+
+	
+
+Place the scratch disk in drive A, then perform a cold start to bring up
+the newly configured CP/M system.
+
+The new CP/M system is then tested and the Digital Research copyright
+notice is placed on the disk, as specified in the Licensing Agreement:
+
+        Copyright (c), 1979
+        Digital Research
+
+
+  6.4 Sample GETSYS and PUTSYS Programs
+
+The following program provides a framework for the GETSYS and PUTSYS
+programs referenced in Sections 6.1 <#Section_6.1> and 6.2
+<#Section_6.2>. To read and write the specific sectors, you must insert
+the READSEC and WRITESEC subroutines.
+
+
+; GETSYS PROGRAM  -- READ TRACKS 0 AND 1 TO MEMORY AT 3380H
+; REGISTER               USE
+; A                      (SCRATCH REGISTER)
+; B                      TRACK COUNT (O, 1)
+; C                      SECTOR COUNT (1,2,...,26)
+; DE                     (SCRATCH REGISTER PAIR)
+; HL                     LOAD ADDRESS
+; SP                     SET TO STACK ADDRESS
+START:  LXI  SP,3380H    ; SET STACK POINTER TO SCRATCH
+                         ; AREA
+        LXI  H,3380H     ; SET BASE LOAD ADDRESS
+        MVI  B,0         ; START WITH TRACK 0
+RDTRK:                   ; READ NEXT TRACK (INITIALLY 0)
+        MVI  C,1         ; READ STARTING WITH SECTOR 1
+DRSEC:                   ; READ NEXT SECTOR
+        CALL RDSEC       ; USER SUPPLIED SUBROUTINE
+        LXI  D,128       ; MOVE LOAD ADDRESS TO NEXT 1/2
+                         ; PAGE
+        DAD  D           ; HL = HL + 128
+        INR  C           ; SECTOR = SECTOR + 1
+        MOV  A,C         ; CHECK FOR END OF TRACK
+        CPI  27
+        JC   RDSEC       ; CARRY GENERATED IF SECTOR <27
+;
+;
+;    ARRIVE HERE AT END OF TRACK, MOVE TO NEXT TRACK
+        INR  B
+        MOV  A,B         ; TEST FOR LAST TRACK
+        CPI  2
+        JC   RDTRK       ; CARRY GENERATED IF TRACK <2
+;
+;
+;    USER SUPPLIED SUBROUTINE TO READ THE DISK
+READSEC:
+;    ENTER WITH TRACK NUMBER IN REGISTER B,
+;       SECTOR NUMBER IN REGISTER C,
+;       AND ADDRESS TO FILL IN HL
+;
+         PUSH B           ; SAVE B AND C REGISTERS
+         PUSH H           ; SAVE HL REGISTERS
+;
+***********************************************
+PERFORM DISK READ AT THIS POINT, BRANCH TO
+LABEL "START" IF AN ERROR OCCURS
+***********************************************
+;
+         POP  H           ; RECOVER HL
+         POP  B           ; RECOVER B AND C REGISTERS
+         RET              ; BACK TO MAIN PROGRAM
+;
+         END START
+
+Listing 6-1. GETSYS Program
+
+This program is assembled and listed in Appendix B
+<http://www.gaby.de/cpm/manuals/archive/cpm22htm/axb.htm> for reference
+purposes, with an assumed origin of 100H. The hexadecimal operation
+codes that are listed on the left might be useful if the program has to
+be entered through the panel switches.
+
+The PUTSYS program can be constructed from GETSYS by changing only a few
+operations in the GETSYS program given above, as shown in Appendix C
+<http://www.gaby.de/cpm/manuals/archive/cpm22htm/axc.htm>. The register
+pair HL becomes the dump address, next address to write, and operations
+on these registers do not change within the program. The READSEC
+subroutine is replaced by a WRITESEC subroutine, which performs the
+opposite function; data from address HL is written to the track given by
+register B and sector given by register C. It is often useful to combine
+GETSYS and PUTSYS into a single program during the test and development
+phase, as shown in Appendix C
+<http://www.gaby.de/cpm/manuals/archive/cpm22htm/axc.htm>.
+
+
+  6.5 Disk Organization
+
+The sector allocation for the standard distribution version of CP/M is
+given here for reference purposes. The first sector contains an optional
+software boot section (see the table on the following page). Disk
+controllers are often set up to bring track 0, sector 1, into memory at
+a specific location, often location 0000H. The program in this sector,
+called BOOT, has the responsibility of bringing the remaining sectors
+into memory starting at location 3400H + b. If the controller does not
+have a built-in sector load, the program in track 0, sector 1 can be
+ignored. In this case, load the program from track 0, sector 2, to
+location 3400H + b.
+
+As an example, the Intel MDS-800 hardware cold start loader brings track
+0, sector 1, into absolute address 3000H. Upon loading this sector,
+control transfers to location 3000H, where the bootstrap operation
+commences by loading the remainder of track 0 and all of track 1 into
+memory, starting at 3400H + b. Note that this bootstrap loader is of
+little use in a non-MDS environment, although it is useful to examine it
+because some of the boot actions will have to be duplicated in the
+user's cold start loader.
+
+ 
+
+Table 6-3. CP/M Disk Sector Allocation Track	Sector	Page #	Memory
+Address	CP/M Module name
+00	01	  	(boot address)	Cold Start Loader
+00	02	00 	3400H + b	CCP
+03	3480H + b
+04	01 	3500H + b
+05	3580H + b
+06	02 	3600H + b
+07	3680H + b
+08	03 	3700H + b
+09	3780H + b
+10	04 	3800H + b
+11	3880H + b
+12	05 	3900H + b
+13	3980H + b
+14	06 	3A00H + b
+15	3A80H + b
+16	07 	3B00H + b
+17	3B80H + b
+00	18	08 	3C00H + b	BDOS
+19	3C80H + b
+20	09 	3D00H + b
+21	3D80H + b
+22	10 	3E00H + b
+23	3E80H + b
+24	11 	3F00H + b
+25	3F80H + b
+26	12 	4000H + b
+01	01	4080H + b
+02	13 	4100H + b
+03	4180H + b
+04	14 	4200H + b
+05	4280H + b
+06	15 	4300H + b
+07	4380H + b
+08	16 	4400H + b
+09	4480H + b
+10	17 	4500H + b
+11	4580H + b
+12	18 	4600H + b
+13	4680H + b
+14	19 	4700H + b
+15	4780H + b
+16	20 	4800H + b
+17	4880H + b
+18	21 	4900H + b
+19	4980H + b
+01	20	22	4A00H + b	BIOS
+21	4A80H + b
+22	23	4B00H + b
+23	4B80H + b
+24	24	4C00H + b
+25	4C80H + b
+26	25	4D00H + b
+
+
+  6.6 The BIOS Entry Points
+
+The entry points into the BIOS from the cold start loader and BDOS are
+detailed below. Entry to the BIOS is through a jump vector located at
+4A00H + b, as shown below. See Appendices A
+<http://www.gaby.de/cpm/manuals/archive/cpm22htm/axa.htm> and B
+<http://www.gaby.de/cpm/manuals/archive/cpm22htm/axb.htm>. The jump
+vector is a sequence of 17 jump instructions that send program control
+to the individual BIOS subroutines. The BIOS subroutines might be empty
+for certain functions (they might contain a single RET operation) during
+reconfiguration of CP/M, but the entries must be present in the jump
+vector.
+
+The jump vector at 4A00H + b takes the form shown below, where the
+individual jump addresses are given to the left:
+
+
+             4A00H+b   JMP BOOT       ;ARRIVE HERE FROM COLD START LOAD
+             4A03H+b   JMP WBOOT      ;ARRIVE HERE FOR WARM START
+             4A06H+b   JMP CONST      ;CHECK FOR CONSOLE CHAR READY
+             4A09H+b   JMP CONIN      ;READ CONSOLE CHARACTER IN
+             4A0CH+b   JMP CONOUT     ;WRITE CONSOLE CHARACTER OUT
+             4A0FH+b   JMP LIST       ;WRITE LISTING CHARACTER OUT
+             4A12H+b   JMP PUNCH      ;WRITE CHARACTER TO PUNCH DEVICE
+             4A15H+b   JMP READER     ;READ READER DEVICE
+             4A18H+b   JMP HOME       ;MOVE TO TRACK 00 ON SELECTED DISK
+             4A1BH+b   JMP SELDSK     ;SELECT DISK DRIVE
+             4A1EH+b   JMP SETTRK     ;SET TRACK NUMBER
+             4A21H+b   JMP SETSEC     ;SET SECTOR NUMBER
+             4A24H+b   JMP SETDMA     ;SET DMA ADDRESS
+             4A27H+b   JMP READ       ;READ SELECTED SECTOR
+             4A2AH+b   JMP WRITE      ;WRITE SELECTED SECTOR
+             4A2DH+b   JMP LISTST     ;RETURN LIST STATUS
+             4A30H+b   JMP SECTRAN    ;SECTOR TRANSLATE SUBROUTINE
+
+Listing 6-2. BIOS Entry Points
+
+Each jump address corresponds to a particular subroutine that performs
+the specific function, as outlined below. There are three major
+divisions in the jump table: the system reinitialization, which results
+from calls on BOOT and WBOOT; simple character I/O, performed by calls
+on CONST, CONIN, CONOUT, LIST, PUNCH, READER, and LISTST; and disk I/O,
+performed by calls on HOME, SELDSK, SETTRK, SETSEC, SETDMA, READ, WRITE,
+and SECTRAN.
+
+All simple character I/O operations are assumed to be performed in
+ASCII, upper- and lower-case, with high-order (parity bit) set to zero.
+An end-of-file condition for an input device is given by an ASCII CTRL-Z
+(1AH). Peripheral devices are seen by CP/M as logical devices and are
+assigned to physical devices within the BIOS.
+
+To operate, the BDOS needs only the CONST, CONIN, and CONOUT
+subroutines. LIST, PUNCH, and READER can be used by PIP, but not the
+BDOS. Further, the LISTST entry is currently used only by DESPOOL, the
+print spooling utility. Thus, the initial version of CBIOS can have
+empty subroutines for the remaining ASCII devices.
+
+The following list describes the characteristics of each device.
+
+  * CONSOLE is the principal interactive console that communicates with
+    the operator and it is accessed through CONST, CONIN, and CONOUT.
+    Typically, the CONSOLE is a device such as a CRT or teletype.
+  * LIST is the principal listing device. If it exists on the user's
+    system, it is usually a hard-copy device, such as a printer or
+    teletype.
+  * PUNCH is the principal tape punching device. If it exists, it is
+    normally a high-speed paper tape punch or teletype.
+  * READER is the principal tape reading device, such as a simple
+    optical reader or teletype. 
+
+A single peripheral can be assigned as the LIST, PUNCH, and READER
+device simultaneously. If no peripheral device is assigned as the LIST,
+PUNCH, or READER device, the CBIOS gives an appropriate error message so
+that the system does not hang if the device is accessed by PIP or some
+other user program. Alternately, the PUNCH and LIST routines can just
+simply return, and the READER routine can return with a 1AH (CTRL-Z) in
+register A to indicate immediate end-of-file.
+
+For added flexibility, you can optionally implement the IOBYTE function,
+which allows reassignment of physical devices. The IOBYTE function
+creates a mapping of logical-to-physical devices that can be altered
+during CP/M processing, see the STAT command in Section 1.6.1
+<http://www.gaby.de/cpm/manuals/archive/cpm22htm/ch1.html#Section_1.6.1>.
+
+The definition of the IOBYTE function corresponds to the Intel standard
+as follows: a single location in memory, currently location 0003H, is
+maintained, called IOBYTE, which defines the logical-to-physical device
+mapping that is in effect at a particular time. The mapping is performed
+by splitting the IOBYTE into four distinct fields of two bits each,
+called the CONSOLE, READER, PUNCH, and LIST fields, as shown in the
+following figure.
+
+ 
+
+Figure 6-1. IOBYTE Fields IOBYTE AT 0003H 	MOST SIGNIFICANT 	LEAST
+SIGNIFICANT
+LIST	PUNCH 	READER	CONSOLE
+7	6	5	4	3	2	1	0
+
+The value in each field can be in the range 0-3, defining the assigned
+source or destination of each logical device. Table 6-4 gives the values
+that can be assigned to each field.
+
+ 
+
+Table 6-4. IOBYTE Field Meaning Value	Meaning
+*CONSOLE field (bits 0,1)*
+0	console is assigned to the console printer device (TTY:)
+1	console is assigned to the CRT device (CRT:)
+2	batch mode: use the READER as the CONSOLE input, and the LIST device
+as the CONSOLE output (BAT:)
+3	user-defined console device (UC1:)
+*READER field (bits 2,3)*
+0	READER is the teletype device (TTY:)
+1	READER is the high speed reader device (PTR:)
+2	user-defined reader #1 (UR1:)
+3	user-defined reader #2 (UR2:)
+*PUNCH field (bits 4,5)*
+0	PUNCH is the teletype device (TTY:)
+1	PUNCH is the high speed punch device (PTP:)
+2	user-defined punch #1 (UP1:)
+3	user-defined punch #2 (UP2:)
+*LIST field (bits 6,7)*
+0	LIST is the teletype device (TTY:)
+1	LIST is the CRT device (CRT:)
+2	LIST is the line printer device (LPT:)
+3	user-defined list device (UL1:)
+
+The implementation of the IOBYTE is optional and effects only the
+organization of the CBIOS. No CP/M system programs use the IOBYTE
+(although they tolerate the existence of the IOBYTE at location 0003H)
+except for PIP, which allows access to the physical devices, and STAT,
+which allows logical-physical assignments to be made or displayed. For
+more information see Section 1
+<http://www.gaby.de/cpm/manuals/archive/cpm22htm/ch1.htm>. In any case
+the IOBYTE implementation should be omitted until the basic CBIOS is
+fully implemented and tested; then you should add the IOBYTE to increase
+the facilities.
+
+Disk I/O is always performed through a sequence of calls on the various
+disk access subroutines that set up the disk number to access, the track
+and sector on a particular disk, and the Direct Memory Access (DMA)
+address involved in the I/O operation. After all these parameters have
+been set up, a call is made to the READ or WRITE function to perform the
+actual I/O operation.
+
+There is often a single call to SELDSK to select a disk drive, followed
+by a number of read or write operations to the selected disk before
+selecting another drive for subsequent operations. Similarly, there
+might be a single call to set the DMA address, followed by several calls
+that read or write from the selected DMA address before the DMA address
+is changed. The track and sector subroutines are always called before
+the READ or WRITE operations are performed.
+
+The READ and WRITE routines should perform several retries (10 is
+standard) before reporting the error condition to the BDOS. If the error
+condition is returned to the BDOS, it reports the error to the user. The
+HOME subroutine might or might not actually perform the track 00 seek,
+depending upon controller characteristics; the important point is that
+track 00 has been selected for the next operation and is often treated
+in exactly the same manner as SETTRK with a parameter of 00.
+
+The following table describes the exact responsibilities of each BIOS
+entry point subroutine.
+
+ 
+
+Table 6-5. BIOS Entry Points Entry Point	Function
+BOOT	The BOOT entry point gets control from the cold start loader and is
+responsible for basic system initialization, including sending a sign-on
+message, which can be omitted in the first version. If the IOBYTE
+function is implemented, it must be set at this point. The various
+system parameters that are set by the WBOOT entry point must be
+initialized, and control is transferred to the CCP at 3400 + b for
+further processing. Note that register C must be set to zero to select
+drive A.
+WBOOT	The WBOOT entry point gets control when a warm start occurs. A
+warm start is performed whenever a user program branches to location
+0000H, or when the CPU is reset from the front panel. The CP/M system
+must be loaded from the first two tracks of drive A up to, but not
+including, the BIOS, or CBIOS, if the user has completed the patch.
+System parameters must be initialized as follows:
+
+location 0,1,2
+    Set to JMP WBOOT for warm starts (000H: JMP 4A03H + b) 
+location 3
+    Set initial value of IOBYTE, if implemented in the CBIOS 
+location 4
+    High nibble = current user number, low nibble = current drive 
+location 5,6,7
+    Set to JMP BDOS, which is the primary entry point to CP/M for
+    transient programs. (0005H: JMP 3C06H + b) 
+
+Refer to Section 6.9 <#Section_6.9> for complete details of page zero
+use. Upon completion of the initialization, the WBOOT program must
+branch to the CCP at 3400H + b to restart the system. Upon entry to the
+CCP, register C is set to the drive to select after system
+initialization. The WBOOT routine should read location 4 in memory,
+verify that is a legal drive, and pass it to the CCP in register C.
+
+CONST	You should sample the status of the currently assigned console
+device and return 0FFH in register A if a character is ready to read and
+00H in register A if no console characters are ready.
+CONIN	The next console character is read into register A, and the parity
+bit is set, high-order bit, to zero. If no console character is ready,
+wait until a character is typed before returning.
+CONOUT	The character is sent from register C to the console output
+device. The character is in ASCII, with high-order parity bit set to
+zero. You might want to include a time-out on a line-feed or carriage
+return, if the console device requires some time interval at the end of
+the line (such as a TI Silent 700 terminal). You can filter out control
+characters that cause the console device to react in a strange way
+(CTRL-Z causes the Lear- Siegler terminal to clear the screen, for
+example).
+LIST	The character is sent from register C to the currently assigned
+listing device. The character is in ASCII with zero parity bit.
+PUNCH	The character is sent from register C to the currently assigned
+punch device. The character is in ASCII with zero parity.
+READER	The next character is read from the currently assigned reader
+device into register A with zero parity (high-order bit must be zero);
+an end-of- file condition is reported by returning an ASCII CTRL-Z(1AH).
+HOME	The disk head of the currently selected disk (initially disk A) is
+moved to the track 00 position. If the controller allows access to the
+track 0 flag from the drive, the head is stepped until the track 0 flag
+is detected. If the controller does not support this feature, the HOME
+call is translated into a call to SETTRK with a parameter of 0.
+SELDSK	The disk drive given by register C is selected for further
+operations, where register C contains 0 for drive A, 1 for drive B, and
+so on up to 15 for drive P (the standard CP/M distribution version
+supports four drives). On each disk select, SELDSK must return in HL the
+base address of a 16-byte area, called the Disk Parameter Header,
+described in Section 6.10 <#Section_6.10>. For standard floppy disk
+drives, the contents of the header and associated tables do not change;
+thus, the program segment included in the sample CBIOS performs this
+operation automatically.
+
+If there is an attempt to select a nonexistent drive, SELDSK returns HL
+= 0000H as an error indicator. Although SELDSK must return the header
+address on each call, it is advisable to postpone the physical disk
+select operation until an I/O function (seek, read, or write) is
+actually performed, because disk selects often occur without ultimately
+performing any disk I/O, , and many controllers unload the head of the
+current disk before selecting the new drive. This causes an excessive
+amount of noise and disk wear. The least significant bit of register E
+is zero if this is the first occurrence of the drive select since the
+last cold or warm start.
+
+SETTRK	Register BC contains the track number for subsequent disk
+accesses on the currently selected drive. The sector number in BC is the
+same as the number returned from the SECTRAN entry point. You can choose
+to seek the selected track at this time or delay the seek until the next
+read or write actually occurs. Register BC can take on values in the
+range 0-76 corresponding to valid track numbers for standard floppy disk
+drives and 0- 65535 for nonstandard disk subsystems.
+SETSEC	Register BC contains the sector number, 1 through 26, for
+subsequent disk accesses on the currently selected drive. The sector
+number in BC is the same as the number returned from the SECTRAN entry
+point. You can choose to send this information to the controller at this
+point or delay sector selection until a read or write operation occurs.
+SETDMA	Register BC contains the DMA (Disk Memory Access) address for
+subsequent read or write operations. For example, if B = 00H and C = 80H
+when SETDMA is called, all subsequent read operations read their data
+into 80H through 0FFH and all subsequent write operations get their data
+from 80H through 0FFH, until the next call to SETDMA occurs. The initial
+DMA address is assumed to be 80H. The controller need not actually
+support Direct Memory Access. If, for example, all data transfers are
+through I/O ports, the CBIOS that is constructed uses the 128 byte area
+starting at the selected DMA address for the memory buffer during the
+subsequent read or write operations.
+READ	Assuming the drive has been selected, the track has been set, and
+the DMA address has been specified, the READ subroutine attempts to read
+eone sector based upon these parameters and returns the following error
+codes in register A:
+
+0 - no errors occurred
+
+1 - nonrecoverable error condition occurred
+
+Currently, CP/M responds only to a zero or nonzero value as the return
+code. That is, if the value in register A is 0, CP/M assumes that the
+disk operation was completed properly. If an error occurs the CBIOS
+should attempt at least 10 retries to see if the error is recoverable.
+When an error is reported the BDOS prints the message BDOS ERR ON x: BAD
+SECTOR. The operator then has the option of pressing a carriage return
+to ignore the error, or CTRL-C to abort.
+
+WRITE	Data is written from the currently selected DMA address to the
+currently selected drive, track, and sector. For floppy disks, the data
+should be marked as nondeleted data to maintain compatibility with other
+CP/M systems. The error codes given in the READ command are returned in
+register A, with error recovery attempts as described above.
+LISTST	You return the ready status of the list device used by the
+DESPOOL program to improve console response during its operation. The
+value 00 is returned in A if the list device is not ready to accept a
+character and 0FFH if a character can be sent to the printer. A 00 value
+should be returned if LIST status is not implemented.
+SECTRAN	Logical-to-physical sector translation is performed to improve
+the overall response of CP/M. Standard CP/M systems are shipped with a
+skew factor of 6, where six physical sectors are skipped between each
+logical read operation. This skew factor allows enough time between
+sectors for most programs to load their buffers without missing the next
+sector. In particular computer systems that use fast processors, memory,
+and disk subsystems, the skew factor might be changed to improve overall
+response. However, the user should maintain a single-density
+IBM-compatible version of CP/M for information transfer into and out of
+the computer system, using a skew factor of 6.
+
+In general, SECTRAN receives a logical sector number relative to zero in
+BC and a translate table address in DE. The sector number is used as an
+index into the translate table, with the resulting physical sector
+number in HL. For standard systems, the table and indexing code is
+provided in the CBIOS and need not be changed.
+
+
+  6.7 A Sample BIOS
+
+The program shown in Appendix B
+<http://www.gaby.de/cpm/manuals/archive/cpm22htm/axb.htm> can serve as a
+basis for your first BIOS. The simplest functions are assumed in this
+BIOS, so that you can enter it through a front panel, if absolutely
+necessary. You must alter and insert code into the subroutines for
+CONST, CONIN, CONOUT, READ, WRITE, and WAITIO subroutines. Storage is
+reserved for user-supplied code in these regions. The scratch area
+reserved in page zero (see Section 6.9 <#Section_6.9>) for the BIOS is
+used in this program, so that it could be implemented in ROM, if desired.
+
+Once operational, this skeletal version can be enhanced to print the
+initial sign-on message and perform better error recovery. The
+subroutines for LIST, PUNCH, and READER can be filled out and the IOBYTE
+function can be implemented.
+
+
+  6.8 A Sample Cold Start Loader
+
+The program shown in Appendix E
+<http://www.gaby.de/cpm/manuals/archive/cpm22htm/axe.htm> can serve as a
+basis for a cold start loader. The disk read function must be supplied
+by the user, and the program must be loaded somehow starting at location
+0000. Space is reserved for the patch code so that the total amount of
+storage required for the cold start loader is 128 bytes.
+
+Eventually, you might want to get this loader onto the first disk sector
+(track 0, sector 1) and cause the controller to load it into memory
+automatically upon system start up. Alternatively, the cold start loader
+can be placed into ROM, and above the CP/M system. In this case, it is
+necessary to originate the program at a higher address and key in a jump
+instruction at system start up that branches to the loader. Subsequent
+warm starts do not require this key-in operation, because the entry
+point WBOOT gets control, thus bringing the system in from disk
+automatically. The skeletal cold start loader has minimal error
+recovery, which might be enhanced in later versions.
+
+
+  6.9 Reserved Locations in Page Zero
+
+Main memory page zero, between locations 0H and 0FFH, contains several
+segments of code and data that are used during CP/M processing. The code
+and data areas are given in the following table.
+
+ 
+
+Table 6-6. Reserved locations in Page Zero Locations	Contents
+0000H-0002H	Contains a jump instruction to the warm start entry location
+4A03H+b. This allows a simple programmed restart (JMP 0000H) or manual
+restart from the front panel.
+0003H-0003H	Contains the Intel standard IOBYTE which is optionally
+included in the user's CBIOS. (refer to Section 6.6).
+0004H-0004H	Current default drive number (0=A,...,15=P) in the low
+nybble and current user number in the high nybble.
+0005H-0007H	Contains a jump instruction to the BDOS and serves two
+purposes: JMP 0005H provides the primary entry point to the BDOS, as
+described in Section 5, and LHLD 0006H brings the address field of the
+instruction to the HL register pair. This value is the lowest address in
+memory used by CP/M, assuming the CCP is being overlaid. The DDT program
+changes the address field to reflect the reduced memory size in debug mode.
+0008H-0027H	Interrupt locations 1 through 5 not used.
+0030H-0037H	Interrupt location 6 (not currently used) is reserved.
+0038H-003AH	Restart 7; contains a jump instruction into the DDT or SID
+program when running in debug mode for programmed breakpoints, but is
+not otherwise used by CP/M.
+003BH-003FH	Not currently used; reserved.
+0040H-004FH	A 16-byte area reserved for scratch by CBIOS, but is not
+used for any purpose in the distribution version of CP/M.
+0050H-005BH	Not currently used; reserved.
+005CH-007CH	Default File Control Block produced for a transient program
+by the CCP.
+007DH-007FH	Optional default random record position.
+0080H-00FFH	Default 128-byte disk buffer, also filled with the command
+line when a transient is loaded under the CCP.
+
+This information is set up for normal operation under the CP/M system,
+but can be overwritten by a transient program if the BDOS facilities are
+not required by the transient.
+
+If, for example, a particular program performs only simple I/O and must
+begin execution at location 0, it can first be loaded into the TPA,
+using normal CP/M facilities, with a small memory move program that gets
+control when loaded. The memory move program must get control from
+location 0100H, which is the assumed beginning of all transient
+programs. The move program can then proceed to the entire memory image
+down to location 0 and pass control to the starting address of the
+memory load.
+
+If the BIOS is overwritten or if location 0, containing the warm start
+entry point, is overwritten, the operator must bring the CP/M system
+back into memory with a cold start sequence.
+
+
+  6.10 Disk Parameter Tables
+
+Tables are included in the BIOS that describe the particular
+characteristics of the disk subsystem used with CP/M. These tables can
+be either hand-coded, as shown in the sample CBIOS in Appendix B
+<http://www.gaby.de/cpm/manuals/archive/cpm22htm/axb.htm>, or
+automatically generated using the DISKDEF macro library, as shown in
+Appendix F <http://www.gaby.de/cpm/manuals/archive/cpm22htm/axf.htm>.
+The purpose here is to describe the elements of these tables.
+
+In general, each disk drive has an associated (16-byte) disk parameter
+header that contains information about the disk drive and provides a
+scratch pad area for certain BDOS operations. The format of the disk
+parameter header for each drive is shown in Figure 6-2 <#Figure_6-2>,
+where each element is a word (16-bit) value.
+
+ 
+
+Figure 6-2. Disk Parameter Header Format DISK PARAMETER HEADER
+XLT	0000	0000	0000	DIRBUF	DPB	CSV	ALV
+16B	16B	16B	16B	16B	16B	16B	16B
+
+The meaning of each Disk Parameter Header (DPH) element is detailed in
+Table 6-7 <#Table_6-7>.
+
+ 
+
+Table 6-7. Disk Parameter Headers Disk
+Parameter
+Header	Meaning
+XLT	Address of the logical-to-physical translation vector, if used for
+this particular drive, or the value 0000H if no sector translation takes
+place (that is, the physical and logical sector numbers are the same).
+Disk drives with identical sector skew factors share the same translate
+tables.
+0000	Scratch pad values for use within the BDOS, initial value is
+unimportant.
+DIRBUF	Address of a 128-byte scratch pad area for directory operations
+within BDOS. All DPHs address the same scratch pad area.
+DPB	Address of a disk parameter block for this drive. Drives
+withidentical disk characteristics address the same disk parameter block.
+CSV	Address of a scratch pad area used for software check for changed
+disks. This address is different for each DPH.
+ALV	Address of a scratch pad area used by the BDOS to keep disk storage
+allocation information. This address is different for each DPH.
+
+Given n disk drives, the DPHs are arranged in a table whose first row of
+16 bytes corresponds to drive 0, with the last row corresponding to
+drive n-1. In the following figure the label DPBASE defines the base
+address of the DPH table.
+
+        DPBASE:
+        00     XLT00 0000  0000  0000  DIRBUF  DBP00 CSV00  ALV00
+        01     XLT01 0000  0000  0000  DIRBUF  DBP01 CSV01  ALV01
+                            (AND SO ON THROUGH)
+        n-1    XLTn-1 0000  0000  0000 DIRBUF  DBPn-1 CSVn-1 ALVn-1
+
+Figure 6-3. Disk Parameter Header Table
+
+A responsibility of the SELDSK subroutine is to return the base address
+of the DPH for the selected drive. The following sequence of operations
+returns the table address, with a 0000H returned if the selected drive
+does not exist.
+
+NDISKS  EQU 4       ;NUMBER OF DISK DRIVES
+      .......
+SELDSK:             ;SELECT DISK GIYEN BY BC
+        LSI  H,0000H   ;ERROR CODE
+        MOV  A,C       ;DRIVE OK?
+        CPI  NDISKS    ;CY IF SO
+        RNC            ;RET IF ERROR
+                       ;NO  ERROR, CONTINUE
+        MOV  L,C       ;LOW(DISK)
+        MOV  H,B       ;HIGH(DISK)
+        DAD  H
+        DAD  H         ;*4
+        DAD  H         ;*B
+        DAD  H         ;*IC
+        LXI  D,DPBASE  ;FIRST DP
+        DAD  D         ;DPH(DISK)
+        RET
+
+The translation vectors, XLT00 through XLTn-1, are located elsewhere in
+the BIOS, and simply correspond one-for-one with the logical sector
+numbers zero through the sector count 1. The Disk Parameter Block (DPB)
+for each drive is more complex. As shown in Figure 6-4 <#Figure_6-4>,
+each particular DPB, that is addressed by one or more DPHS, takes the
+general form:
+
+ 
+
+Figure 6-4. Disk Parameter Block Format SPT	BSH	BLM	EXM	DSM	DRM	AL0
+AL1	CKS	OFF
+16B	8B 	8B 	8B 	16B	16B	8B 	8B 	16B	16B
+
+where each is a byte or word value, as shown by the 8b or 16b indicator
+below the field.
+
+The following field abbreviations are used in Figure 6-4:
+
+  * SPT is the total number of sectors per track.
+  * BSH is the data allocation block shift factor, determined by the
+    data block allocation size.
+  * BLM is the data allocation block mask (2[BSH-1]).
+  * EXM is the extent mask, determined by the data block allocation size
+    and the number of disk blocks.
+  * DSM determines the total storage capacity of the disk drive.
+  * DRM determines the total number of directory entries that can be
+    stored on this drive.
+  * AL0, AL1 determine reserved directory blocks.
+  * CKS is the size of the directory check vector.
+  * OFF is the number of reserved tracks at the beginning of the
+    (logical) disk. 
+
+The values of BSH and BLM determine the data allocation size BLS, which
+is not an entry in the DPB. Given that the designer has selected a value
+for BLS, the values of BSH and BLM are shown in Table 6-8 <#Table_6-8>.
+
+ 
+
+Table 6-8. BSH and BLM Values BLS	BSH	BLM
+1,024	3	7
+2,048	4	15
+4,096	5	31
+8,192	6	63
+16,384	7	127
+
+where all values are in decimal. The value of EXM depends upon both the
+BLS and whether the DSM value is less than 256 or greater than 255, as
+shown in Table 6-9 <#Table_6-9>.
+
+ 
+
+Table 6-9. EXM Values BLS	EXM values
+DSM<256	DSM>255
+1,024	0	N/A
+2,048	1	0
+4,096	3	1
+8,192	7	3
+16,384	15	7
+
+The value of DSM is the maximum data block number supported by this
+particular drive, measured in BLS units. The product (DSM + 1) is the
+total number of bytes held by the drive and must be within the capacity
+of the physical disk, not counting the reserved operating system tracks.
+
+The DRM entry is the one less than the total number of directory entries
+that can take on a 16-bit value. The values of AL0 and AL1, however, are
+determined by DRM. The values AL0 and AL1 can together be considered a
+string of 16-bits, as shown in Figure 6-5 <#Figure_6-5>.
+
+ 
+
+Figure 6-5. AL0 and AL1 AL0	AL1
+00	01	02	03	04	05	06	07 	08	09	10	11	12	13	14	15
+
+Position 00 corresponds to the high-order bit of the byte labeled AL0
+and 15 corresponds to the low-order bit of the byte labeled AL1. Each
+bit position reserves a data block for number of directory entries, thus
+allowing a total of 16 data blocks to be assigned for directory entries
+(bits are assigned starting at 00 and filled to the right until position
+15). Each directory entry occupies 32 bytes, resulting in the following
+tabulation:
+
+ 
+
+Table 6-10. BLS Tabulation BLS	Directory Entries
+1,024	32 times # bits
+2,048	64 times # bits
+4,096	128 times # bits
+8,192	256 times # bits
+16,384	512 times # bits
+
+Thus, if DRM = 127 (128 directory entries) and BLS = 1024, there are 32
+directory entries per block, requiring 4 reserved blocks. In this case,
+the 4 high-order bits of AL0 are set, resulting in the values AL0 = 0F0H
+and AL1 = 00H.
+
+The CKS value is determined as follows: if the disk drive media is
+removable, then CKS = (DRM + 1)/4, where DRM is the last directory entry
+number. If the media are fixed, then set CKS = 0 (no directory records
+are checked in this case).
+
+Finally, the OFF field determines the number of tracks that are skipped
+at the beginning of the physical disk. This value is automatically added
+whenever SETTRK is called and can be used as a mechanism for skipping
+reserved operating system tracks or for partitioning a large disk into
+smaller segmented sections.
+
+To complete the discussion of the DPB, several DPHs can address the same
+DPB if their drive characteristics are identical. Further, the DPB can
+be dynamically changed when a new drive is addressed by simply changing
+the pointer in the DPH; because the BDOS copies the DPB values to a
+local area whenever the SELDSK function is invoked.
+
+Returning back to DPH for a particular drive, the two address values CSV
+and ALV remain. Both addresses reference an area of uninitialized memory
+following the BIOS. The areas must be unique for each drive, and the
+size of each area is determined by the values in the DPB.
+
+The size of the area addressed by CSV is CKS bytes, which is sufficient
+to hold the directory check information for this particular drive. If
+CKS = (DRM + 1)/4, you must reserve (DRM + 1)/4 bytes for directory
+check use. If CKS = 0, no storage is reserved.
+
+The size of the area addressed by ALV is determined by the maximum
+number of data blocks allowed for this particular disk and is computed
+as (DSM/8) + 1.
+
+The CBIOS shown in Appendix B
+<http://www.gaby.de/cpm/manuals/archive/cpm22htm/axb.htm> demonstrates
+an instance of these tables for standard 8-inch, single-density drives.
+It might be useful to examine this program and compare the tabular
+values with the definitions given above.
+
+
+  6.11 The DISKDEF Macro Library
+
+A macro library called DISKDEF (shown in Appendix F
+<http://www.gaby.de/cpm/manuals/archive/cpm22htm/axf.htm>), greatly
+simplifies the table construction process. You must have access to the
+MAC macro assembler, of course, to use the DISKDEF facility, while the
+macro library is included with all CP/M 2 distribution disks.
+
+A BIOS disk definition consists of the following sequence of macro
+statements:
+
+        MACLIB      DISKDEF
+
+        DISKS       n
+        DISKDEF     0,. . .
+        DISKDEF     1,. . .
+             .....
+        DISKDEF     n - 1
+
+        ENDEF
+
+where the MACLIB statement loads the DISKDEF.LIB file, on the same disk
+as the BIOS, into MAC's internal tables. The DISKS macro call follows,
+which specifies the number of drives to be configured with the user's
+system, where n is an integer in the range 1 to 16. A series of DISKDEF
+macro calls then follow that define the characteristics of each logical
+disk, 0 through n - 1, corresponding to logical drives A through P. The
+DISKS and DISKDEF macros generate the in-line fixed data tables
+described in the previous section and thus must be placed in a
+nonexecutable portion of the BIOS, typically directly following the BIOS
+jump vector.
+
+The remaining portion of the BIOS is defined following the DISKDEF
+macros, with the ENDEF macro call immediately preceding the END
+statement. The ENDEF (End of Diskdef) macro generates the necessary
+uninitialized RAM areas that are located in memory above the BIOS.
+
+The DISKDEF macro call takes the form:
+
+        DISKDEF dn,fsc,lsc,[skf],bls dks,dir,cks,ofs,[0]
+
+where
+
+  * dn is the logical disk number, 0 to n - 1.
+  * fsc is the first physical sector number (0 or 1).
+  * lsc is the last sector number.
+  * skf is the optional sector skew factor.
+  * bls is the data allocation block size.
+  * dks is the number of blocks on the disk.
+  * dir is the number of directory entries.
+  * cks is the number of checked directory entries.
+  * ofs is the track offset to logical track 00.
+  * [0] is an optional 1.4 compatibility flag. 
+
+The value dn is the drive number being defined with this DISKDEF macro
+invocation. The fsc parameter accounts for differing sector numbering
+systems and is usually 0 to 1. The lsc is the last numbered sector on a
+track. When present, the skf parameter defines the sector skew factor,
+which is used to create a sector translation table according to the skew.
+
+If the number of sectors is less than 256, a single-byte table is
+created, otherwise each translation table element occupies two bytes. No
+translation table is created if the skf parameter is omitted, or equal
+to 0.
+
+The bls parameter specifies the number of bytes allocated to each data
+block, and takes on the values 1024, 2048, 4096, 8192, or 16384.
+Generally, performance increases with larger data block sizes because
+there are fewer directory references, and logically connected data
+records are physically close on the disk. Further, each directory entry
+addresses more data and the BIOS-resident RAM space is reduced.
+
+The dks parameter specifies the total disk size in bls units. That is,
+if the bls = 2048 and dks = 1000, the total disk capacity is 2,048,000
+bytes. If dks is greater than 255, the block size parameter bls must be
+greater than 1024. The value of dir is the total number of directory
+entries that might exceed 255, if desired.
+
+The cks parameter determines the number of directory items to check on
+each directory scan and is used internally to detect changed disks
+during system operation, where an intervening cold or warm start has not
+occurred. When this situation is detected, CP/M automatically marks the
+disk Read-Only so that data is not subsequently destroyed.
+
+As stated in the previous section, the value of cks = dir when the
+medium is easily changed, as is the case with a floppy disk subsystem.
+If the disk is permanently mounted, the value of cks is typically 0,
+because the probability of changing disks without a restart is low.
+
+The ofs value determines the number of tracks to skip when this
+particular drive is addressed, which can be used to reserve additional
+operating system space or to simulate several logical drives on a single
+large capacity physical drive. Finally, the [0] parameter is included
+when file compatibility is required with versions of 1.4 that have been
+modified for higher density disks. This parameter ensures that only 16K
+is allocated for each directory record, as was the case for previous
+versions. Normally, this parameter is not included.
+
+For convenience and economy of table space, the special form:
+
+        DISKDEF   i,j
+
+gives disk i the same characteristics as a previously defined drive j. A
+standard fourdrive, single-density system, which is compatible with
+version 1.4, is defined using the following macro invocations:
+
+        DISKS      4
+        DISKDEF    0,1,26,6,1024,243,64,2
+        DISKDEF    1,0
+        DISKDEF    2,0
+        DISKDEF    3,0
+             ......
+        ENDEF
+
+with all disks having the same parameter values of 26 sectors per track,
+numbered 1 through 26, with 6 sectors skipped between each access, 1024
+bytes per data block, 243 data blocks for a total of 243K-byte disk
+capacity, 64 checked directory entries, and two operating system tracks.
+
+The DISKS macro generates n DPHS, starting at the DPH table address
+DPBASE generated by the macro. Each disk header block contains sixteen
+bytes, as described above, and correspond one- for-one to each of the
+defined drives. In the four-drive standard system, for example, the
+DISKS macro generates a table of the form:
+
+        DPBASE EQU $
+        DPE0:  DW XLT0,0000H,0000H,0000H,DIRBUF,DPB0,CSV0,ALV0
+        DPE1:  DW XLT0,0000H,0000H,0000H,DIRBUF,DPB0,CSV1,ALV1
+        DPE2:  DW XLT0,0000H,0000H,0000H,DIRBUF,DPB0,CSV2,ALV2
+        DPE3:  DW XLT0,0000H,0000H,0000H,DIRBUF,DPB0,CSV3,ALV3
+
+where the DPH labels are included for reference purposes to show the
+beginning table addresses for each drive 0 through 3. The values
+contained within the DPH are described in detail in the previous
+section. The check and allocation vector addresses are generated by the
+ENDEF macro in the RAM area following the BIOS code and tables.
+
+Note that if the skf (skew factor) parameter is omitted, or equal to 0,
+the translation table is omitted and a 0000H value is inserted in the
+XLT position of the DPH for the disk. In a subsequent call to perform
+the logical-to-physical translation, SECTRAN receives a translation
+table address of DE = 0000H and simply returns the original logical
+sector from BC in the HL register pair.
+
+A translate table is constructed when the skf parameter is present, and
+the (nonzero) table address is placed into the corresponding DPHS. The
+following, for example, is constructed when the standard skew factor skf
+= 6 is specified in the DISKDEF macro call:
+
+        XLT0: DB 1,7,13,19,25,5,11,17,23,3,9,15,21
+              DB 2,8,14,20,26,6,12,18,24,4,10,16,22
+
+Following the ENDEF macro call, a number of uninitialized data areas are
+defined. These data areas need not be a part of the BIOS that is loaded
+upon cold start, but must be available between the BIOS and the end of
+memory. The size of the uninitialized RAM area is determined by EQU
+statements generated by the ENDEF macro. For a standard four-drive
+system, the ENDEF macro might produce the following EQU statement:
+
+        4C72 =    BEGDAT EQU $ (data areas)
+        4DB0 =    ENDDAT EQU $
+        013C =    DATSIZ EQU $-BEGDAT
+
+which indicates that uninitialized RAM begins at location 4C72H, ends at
+4DB0H-1, and occupies 013CH bytes. You must ensure that these addresses
+are free for use after the system is loaded.
+
+After modification, you can use the STAT program to check drive
+characteristics, because STAT uses the disk parameter block to decode
+the drive information. A STAT command of the form:
+
+        STAT D:DSK:
+
+decodes the disk parameter block for drive d (d = A,...,P) and displays
+the following values:
+
+        r: 128-byte record capacity
+        k: kilobyte drive capacity
+        d: 32-byte directory entries
+        c: checked directory entries
+        e: records/extent
+        b: records/block
+        s: sectors/track
+        t: reserved tracks
+
+Three examples of DISKDEF macro invocations are shown below with
+corresponding STAT parameter values. The last example produces a full
+8-megabyte system.
+
+        DISKDEF 0,1,58,,2048,256,128,128,2
+        r=4096, k=512, d=128, c=128, e=256, b=16, s=58, t=2
+
+        DISKDEF 0,1,58,,2048,1024,300,0,2
+        r=16348, k=2048, d=300, c=0, e=128, b=16, s=58, t=2
+
+        DISKDEF 0,1,58,,16348,512,128,128,2
+        r=65536, k=8192, d=128, c=128, e=1024, b=128, s=58, t=2
+
+
+  6.12 Sector Blocking and Deblocking
+
+Upon each call to BIOS WRITE entry point, the CP/M BDOS includes
+information that allows effective sector blocking and deblocking where
+the host disk subsystem has a sector size that is a multiple of the
+basic 128-byte unit. The purpose here is to present a general-purpose
+algorithm that can be included within the BIOS and that uses the BDOS
+information to perform the operations automatically.
+
+On each call to WRITE, the BDOS provides the following information in
+register C:
+
+ 
+
+0	(normal sector write)
+1	(write to directory sector)
+2	(write to the first sector of a new data block)
+
+Condition 0 occurs whenever the next write operation is into a
+previously written area, such as a random mode record update; when the
+write is to other than the first sector of an unallocated block; or when
+the write is not into the directory area. Condition 1 occurs when a
+write into the directory area is performed. Condition 2 occurs when the
+first record (only) of a newly allocated data block is written. In most
+cases, application programs read or write multiple 128-byte sectors in
+sequence; thus, there is little overhead involved in either operation
+when blocking and deblocking records, because preread operations can be
+avoided when writing records.
+
+Appendix G <http://www.gaby.de/cpm/manuals/archive/cpm22htm/axg.htm>
+lists the blocking and deblocking algorithms in skeletal form; this file
+is included on your CP/M disk. Generally, the algorithms map all CP/M
+sector read operations onto the host disk through an intermediate buffer
+that is the size of the host disk sector. Throughout the program, values
+and variables that relate to the CP/M sector involved in a seek are
+prefixed by sek, while those related to the host disk system are
+prefixed by hst. The equate statements beginning on line 29 of Appendix
+G <http://www.gaby.de/cpm/manuals/archive/cpm22htm/axg.htm> define the
+mapping between CP/M and the host system, and must be changed if other
+than the sample host system is involved.
+
+The entry points BOOT and WBOOT must contain the initialization code
+starting on line 57, while the SELDSK entry point must be augmented by
+the code starting on line 65. Note that although the SELDSK entry point
+computes and returns the Disk Parameter Header address, it does not
+physically select the host disk at this point (it is selected later at
+READHST or WRITEHST). Further, SETTRK and SETMA simply store the values,
+but do not take any other action at this point. SECTRAN performs a
+trivial function of returning the physical sector number.
+
+The principal entry points are READ and WRITE, starting on lines 110 and
+125, respectively. These subroutines take the place of your previous
+READ and WRITE operations.
+
+The actual physical read or write takes place at either WRITEHST or
+READHST, where all values have been prepared: hstdsk is the host disk
+number, hsttrk is the host track number, and hstsec is the host sector
+number, which may require translation to physical sector number. You
+must insert code at this point that performs the full sector read or
+write into or out of the buffer at hstbuf of length hstsiz. All other
+mapping functions are performed by the algorithms.
+
+This particular algorithm was tested using an 80-megabyte hard disk unit
+that was originally configured for 128-byte sectors, producing
+approximately 35 megabytes of formatted storage. When configured for
+512-byte host sectors, usable storage increased to 57 megabytes, with a
+corresponding 400% improvement in overall response. In this situation,
+there is no apparent overhead involved in deblocking sectors, with the
+advantage that user programs still maintain 128-byte sectors. This is
+primarily because of the information provided by the BDOS, which
+eliminates the necessity for preread operations.
+
+------------------------------------------------------------------------
+
+Back to title page
+<http://www.gaby.de/cpm/manuals/archive/cpm22htm/index.htm>      Next
+<http://www.gaby.de/cpm/manuals/archive/cpm22htm/axa.htm>
+
