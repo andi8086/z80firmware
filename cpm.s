@@ -45,6 +45,7 @@ CBASE:  LD	DE, WELCOME_MSG
 	CALL	PRTSTR
 	LD	DE, COPYRIGHT
 	CALL	PRTSTR
+	CALL	cf_init		; init compact flash card
 	LD	C, 00000000b	; UUUUDDDD, u=user, d=drive
 	JP	COMMAND		;execute command processor (ccp).
 	JP	CLEARBUF	;entry to empty input buffer before starting ccp.
@@ -3728,7 +3729,7 @@ CONOUT:	JP	RZ80_CONOUT
 LIST:	JP	DUMMY
 PUNCH:	JP	DUMMY
 READER:	JP	DUMMY
-HOME:	JP	DUMMY
+HOME:	JP	RZ80_HOMEDRV
 SELDSK:	JP	RZ80_SELDSK
 SETTRK:	JP	RZ80_SETTRK
 SETSEC:	JP	RZ80_SETSEC
@@ -3736,7 +3737,7 @@ SETDMA:	JP	RZ80_SETDMA
 READ:	JP	RZ80_READ
 WRITE:	JP	RZ80_WRITE
 PRSTAT:	JP	DUMMY
-SECTRN:	JP	DUMMY
+SECTRN:	JP	RZ80_SECTRAN
 ;
 ;*
 ;******************   E N D   O F   C P / M   *****************
@@ -3744,7 +3745,37 @@ SECTRN:	JP	DUMMY
 
 ;****************** REICHEL RZ80 BIOS *************************
 ;
-#define DISKS 4
+DISKS	= 4		; number of disks in system
+
+IDE_BASE = 38h		; changed from 0x30 to 0x38 because of IO conflicht
+			; with FIFO buffer
+IDE_DATA = IDE_BASE + 0 ; instead of 0 because of FIFO collision
+IDE_FEATURE = IDE_BASE + 1 ; instead of 0 because of FIFO collision
+IDE_SECC = IDE_BASE + 2 ; sector count
+IDE_LBA0 = IDE_BASE + 3
+IDE_LBA1 = IDE_BASE + 4
+IDE_LBA2 = IDE_BASE + 5
+IDE_LBA3 = IDE_BASE + 6
+IDE_COMMAND = IDE_BASE + 7	;write
+IDE_STATUS = IDE_BASE + 7	;read
+
+IDE_CMD_SET_FEATURE	= 0xEF
+IDE_CMD_IDENTIFY	= 0xEC
+IDE_CMD_RESET		= 0x04
+IDE_CMD_READ_SECTOR	= 0x20
+IDE_CMD_WRITE_SECTOR	= 0x30
+
+IDE_FEATURE_8BIT_TRANSFER = 0x01
+IDE_FEATURE_NO_WRITE_CACHE = 0x82
+
+IDE_STATUS_ERROR	= 0x01
+IDE_STATUS_DRQ		= 0x40
+IDE_STATUS_BUSY		= 0x80
+
+IDE_FLAGS_LBA		= 0xE0	; upper part of LBA3 reg
+
+RZ80_HOMEDRV:
+	RET
 
 DUMMY:
 	RET
@@ -3808,58 +3839,323 @@ RZ80_SETSEC:
 	LD (sector), A
 	RET
 
+RZ80_SECTRAN:
+	; BC = logical sector number (zero based)
+	; DE = address of translation table
+	; output: HL = physical sector number
+	LD HL, BC
+	INC HL		; at the moment just return DE + 1
+	RET
+
 RZ80_READ:
+	; read a sector to the address 'dmaad'
+	CALL CS_to_LBA
+	; A = block index, H'L'HL = LBA address
+	PUSH AF
+	LD IX, VAR_LBA0
+	LD (IX), HL
+	EXX
+	LD (IX+2), HL
+	EXX
+	CALL cf_read_lba	; read 512 bytes into blockbuffer
+	LD DE, 128
+	POP AF
+	; transfer data to dma buffer
+	LD HL, blockbuff
+	RRA
+	JR NC, noblockidx1	; if A, bit 0 is set, use blockbuff+128
+	ADD HL, DE
+noblockidx1:
+	RRA
+	JR NC, noblockidx2	; if A, bit 1 is set, advance 256 bytes
+				; further into blockbuffer
+	ADD HL, DE
+	ADD HL, DE
+noblockidx2:
+	LD DE, (dmaad)
+	LD BC, 128
+	LDIR			; (HL)->(DE) for (BC) times
+
+	XOR A			; A = 0 no error
+				; A = 1: unrecoverable error
+				; A = 0FFh media changed
 	RET
 
 RZ80_WRITE:
+	; write data at 'dmaad' to sector
+	ld a, 1			; simulate unrecoverable error
+
 	RET
+
+CS_to_LBA:
+	; convert CS to LBA
+	ld ix, track
+	ld hl, (ix)
+	exx
+	ld hl, 0
+	exx
+	ld a, 26
+	call MUL_HLHL_A
+	ld a, (sector)
+	dec a
+	add a, l
+	ld l, a
+	ld a, h
+	adc a, 0
+	ld h, a
+	ld b, 0	; used further below
+	exx
+	ld a, l
+	adc a, 0
+	ld l, a
+	ld a, h
+	adc a, 0
+	ld h, a
+	;exx
+	; H'L'HL now contains LBA for 128 byte sectors
+	; divide it by 4 and get the rest as index in a
+	;exx
+	rr h
+	rr l
+	exx
+	rr h
+	rr l
+	rl b
+	exx
+	rr h
+	rr l
+	exx
+	rr h
+	rr l
+	rl b
+	; H'L' now contains LBA for 512 byte sectors with a from 0 to 3
+	; as partial 512 byte block index for 128 byte sub blocks
+	ld a, b
+	ret
+
+MUL_HLHL_A:
+	; perform HL'HL := HL'HL * A
+	ld de, 0
+	exx
+	ld de, 0
+	exx
+	ld b, 8		; check 8 bits
+next_bit:
+	rra
+	push af
+	jr nc, skip_bit
+	ld a, e
+	add a, l
+	ld e, a
+	ld a, d
+	adc a, h
+	ld d, a
+	exx
+	ld a, e
+	adc a, l
+	ld e, a
+	ld a, d
+	adc a, h
+	ld d, a
+	exx
+skip_bit:
+	pop af
+	add hl, hl
+	exx
+	adc hl, hl
+	exx
+	dec b
+	jr nz, next_bit
+	ld hl, de
+	exx
+	ld hl, de
+	exx
+	ret
+
+reset_CF:
+	call cf_init
+
+	ld a, IDE_FEATURE_NO_WRITE_CACHE
+	out (IDE_FEATURE), a
+	ld a, IDE_CMD_SET_FEATURE
+	out (IDE_COMMAND), a
+	call cf_wait
+	call cf_checkerror
+
+	;ld a, 2
+	;ld (VAR_LBA0), a
+	;xor a
+	;ld (VAR_LBA1), a
+	;ld (VAR_LBA2), a
+	;ld (VAR_LBA3), a
+	;call cf_write_lba
+	ret
+
+cf_wait:
+	in a, (IDE_STATUS)
+	and IDE_STATUS_BUSY
+	jr nz,cf_wait
+	ret
+
+cf_checkerror:
+	in a, (IDE_STATUS)
+	and IDE_STATUS_ERROR
+	ret z
+	; error occured
+	ret
+
+cf_load_lba_address:
+	ld a, (VAR_LBA0)
+	out (IDE_LBA0), a
+	ld a, (VAR_LBA1)
+	out (IDE_LBA1), a
+	ld a, (VAR_LBA2)
+	out (IDE_LBA2), a
+	ld a, (VAR_LBA3)
+	and 0x0F
+	or IDE_FLAGS_LBA
+	out (IDE_LBA3), a
+	ret
+
+cf_read_lba:
+	call cf_load_lba_address
+	ld a, IDE_CMD_READ_SECTOR
+	out (IDE_COMMAND), a
+	call cf_wait
+cf_read_512:
+	ld hl, 512
+	ld de, blockbuff
+read_bytes:
+	in a, (IDE_STATUS)
+	and IDE_STATUS_DRQ
+	jr z, read_bytes     ; wait for DRQ
+	in a, (IDE_DATA)
+	dec hl
+	ld (de),a
+	inc de
+	xor a
+	or h
+	or l
+	jr nz, read_bytes
+	ret
+
+cf_write_lba:
+	call cf_load_lba_address
+	ld a, IDE_CMD_WRITE_SECTOR
+	out (IDE_COMMAND), a
+	call cf_wait
+cf_write_512:
+	ld hl, 512
+	ld de, blockbuff
+write_bytes:
+	in a, (IDE_STATUS)
+	and IDE_STATUS_DRQ
+	jr z, write_bytes	; wait for DRQ
+	ld a, (de)
+	out (IDE_DATA), a
+	inc de
+	dec hl
+	xor a
+	or h
+	or l
+	jr nz, write_bytes
+	ret
+
+cf_init:
+	ld a, IDE_CMD_RESET
+	out (IDE_COMMAND), a
+	call cf_wait
+	ld a, IDE_FLAGS_LBA
+	out (IDE_LBA3), a
+	ld a, IDE_FEATURE_8BIT_TRANSFER
+	out (IDE_FEATURE), a
+	ld a, IDE_CMD_SET_FEATURE
+	out (IDE_COMMAND), a
+	call cf_wait
+	call cf_checkerror
+	ld a, 1
+	out (IDE_SECC), a
+	ret
+
+fill_buffer:
+	ld de, blockbuff
+	ld hl, 512
+	push af
+fill_bytes:
+	pop af
+	push af
+	ld (de), a
+	dec hl
+	inc de
+	xor a
+	or h
+	or l
+	jr nz,fill_bytes
+	pop af
+	ret
+
+blockbuff: defs 512
 
 track: DEFW 0
 sector: DEFW 0
 diskno: DEFB 0
 dmaad: DEFW 0
 
+VAR_LBA0: DEFB 0
+VAR_LBA1: DEFB 0
+VAR_LBA2: DEFB 0
+VAR_LBA3: DEFB 0
+
 ; ibm-compatible 8" disks
 ; no translations
 ;
 ; disk Parameter header for disk 00
-dpbase: 	defw  	0000h, 0000h
+dpbase: defw  	transCF, 0000h
 	defw 	0000h, 0000h
 	defw 	dirbf, dpblk
 	defw 	chk00, all00
 ; disk parameter header for disk 01
-          	defw 	0000h, 0000h
+        defw 	trans8, 0000h
 	defw  	0000h, 0000h
 	defw 	dirbf, dpblk
 	defw 	chk01, all01
 ; disk parameter header for disk 02
-          	defw 	0000h, 0000h
+        defw 	transCF, 0000h
 	defw  	0000h, 0000h
 	defw 	dirbf, dpblk
 	defw 	chk02, all02
 ; disk parameter header for disk 03
-          	defw 	0000h, 0000h
+        defw 	transCF, 0000h
 	defw  	0000h, 0000h
 	defw 	dirbf, dpblk
 	defw 	chk03, all03
 ;
 ; sector translate vector
-trans: 	defm  	1, 7, 13, 19 	;sectors 1, 2, 3, 4
+trans8:	defm  	1, 7, 13, 19 	;sectors 1, 2, 3, 4
 	defm 	25, 5, 11, 17 	;sectors 5, 6, 7, 6
 	defm 	23, 3, 9, 15 	;sectors 9, 10, 11, 12
 	defm 	21, 2, 8, 14 	;sectors 13, 14, 15, 16
 	defm 	20, 26, 6, 12  	;sectors 17, 18, 19, 20
 	defm 	18, 24, 4, 10 	;sectors 21, 22, 23, 24
 	defm 	16, 22 	;sectors 25, 26
+
+transCF: defm	1, 2, 3, 4
+	defm	5, 6, 7, 8
+	defm	9, 10, 11, 12
+	defm	13, 14, 15, 16
+	defm	17, 18, 19, 20
+	defm	21, 22, 23, 24
+	defm	25, 26
+
 ;
 dpblk: ;disk parameter block for all disks.
-          	defw  	26 	;sectors per track
+        defw  	26 	;sectors per track
 	defm 	3 	;block shift factor
 	defm 	7 	;block mask
 	defm 	0 	;null mask
 	defw 	242  	;disk size-1
 	defw 	63 	;directory max
-	defm 	192 	;alloc 0
+	defm 	0b11000000 ;alloc 0	(first 2 blocks for dir)
 	defm 	0 	;alloc 1
 	defw 	0 	;check size
 	defw 	2 	;track offset
