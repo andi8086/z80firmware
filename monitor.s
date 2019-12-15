@@ -58,12 +58,17 @@ _finish_checksum:
 	ld a, (cksum+1)
 	cp h
 	jr nz, _error_cksum
+
+	call _fifo_get_byte
+	cp 'g'
+	jr nz, dont_start
 	ld hl, (addr)
 	jp (hl)			; jump to downloaded code
 
 _error_cksum:
 	ld a, 'E'
 	out (0), a
+dont_start:
 	jp start
 
 addr:	.word 0
