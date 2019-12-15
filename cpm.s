@@ -1,5 +1,4 @@
-;**************************************************************
-;*
+;************************************************************** ;*
 ;*             C P / M   version   2 . 2
 ;*
 ;*   Reconstructed from memory image on February 27, 1981
@@ -11,7 +10,9 @@
 ;   Set memory limit here. This is the amount of contigeous
 ; ram starting from 0000. CP/M will reside at the end of this space.
 ;
-MEM	EQU	64		;for a 62k system (TS802 TEST - WORKS OK).
+MEM	EQU	63		;for a 62k system (TS802 TEST - WORKS OK).
+				; here we use 63K because we need more space
+				; for RZ80 bios
 ;
 IOBYTE	EQU	3		;i/o definition byte.
 TDRIVE	EQU	4		;current drive name and user number.
@@ -36,7 +37,7 @@ CNTRLU	EQU	15H		;control-u
 CNTRLX	EQU	18H		;control-x
 CNTRLZ	EQU	1AH		;control-z (end-of-file mark)
 DEL	EQU	7FH		;rubout
-;
+
 ;   Set origin for CP/M
 ;
 	ORG	(MEM-7)*1024
@@ -45,7 +46,7 @@ CBASE:  LD	DE, WELCOME_MSG
 	CALL	PRTSTR
 	LD	DE, COPYRIGHT
 	CALL	PRTSTR
-	CALL	cf_init		; init compact flash card
+	CALL	reset_CF	; init compact flash card
 	LD	C, 00000000b	; UUUUDDDD, u=user, d=drive
 	JP	COMMAND		;execute command processor (ccp).
 	JP	CLEARBUF	;entry to empty input buffer before starting ccp.
@@ -1302,7 +1303,8 @@ FUNCTNS:DEFW	WBOOT,GETCON,OUTCON,GETRDR,PUNCH,LIST,DIRCIO,GETIOB
 ERROR1:	LD	HL,BADSEC	;bad sector message.
 	CALL	PRTERR		;print it and get a 1 char responce.
 	CP	CNTRLC		;re-boot request (control-c)?
-	JP	Z,0		;yes.
+	;	JP	Z,0		;yes.	; change to enter CPM again
+	JP	Z, CBASE
 	RET			;no, return to retry i/o function.
 ;
 ERROR2:	LD	HL,BADSEL	;bad drive selected.
@@ -1314,7 +1316,7 @@ ERROR3:	LD	HL,DISKRO	;disk is read only.
 ERROR4:	LD	HL,FILERO	;file is read only.
 ;
 ERROR5:	CALL	PRTERR
-	JP	0		;always reboot on these errors.
+	JP	CBASE		;always reboot on these errors.
 ;
 BDOSERR:DEFB	'Bdos Err On '
 BDOSDRV:DEFB	' : $'
@@ -1387,7 +1389,7 @@ CKCONSOL: LD	A,(CHARBUF)	;check buffer.
 	JP	NZ,CKCON1
 	CALL	CONIN		;halt processing until another char
 	CP	CNTRLC		;is typed. Control-c?
-	JP	Z,0		;yes, reboot now.
+	JP	Z,CBASE		;yes, reboot now.
 	XOR	A		;no, just pretend nothing was ever ready.
 	RET
 CKCON1:	LD	(CHARBUF),A	;save character in buffer for later processing.
@@ -3722,7 +3724,7 @@ CKSUMTBL: DEFB	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 ;**************************************************************
 ;
 BOOT:	JP	DUMMY
-WBOOT:	JP	DUMMY
+WBOOT:	JP	0xE000
 CONST:	JP	RZ80_CONSTAT
 CONIN:	JP	RZ80_CONIN
 CONOUT:	JP	RZ80_CONOUT
@@ -3883,8 +3885,36 @@ noblockidx2:
 
 RZ80_WRITE:
 	; write data at 'dmaad' to sector
-	ld a, 1			; simulate unrecoverable error
-
+	CALL CS_to_LBA
+	; A = block index, H'L'HL = LBA address
+	PUSH AF
+	LD IX, VAR_LBA0
+	LD (IX), HL
+	EXX
+	LD (IX+2), HL
+	EXX
+	call cf_read_lba	; first read the whole 512 bytes containing the
+	POP AF			;	sector into the blockbuffer
+	LD DE, 128
+	; transfer data to dma buffer
+	LD HL, blockbuff
+	RRA
+	JR NC, noblockidx1w	; if A, bit 0 is set, use blockbuff+128
+	ADD HL, DE
+noblockidx1w:
+	RRA
+	JR NC, noblockidx2w	; if A, bit 1 is set, advance 256 bytes
+				; further into blockbuffer
+	ADD HL, DE
+	ADD HL, DE
+noblockidx2w:
+	LD DE, (dmaad)
+	EX DE, HL
+	LD BC, 128		; update the write buffer with the 128 byte
+	LDIR			; (HL)->(DE) for (BC) times
+	call cf_write_lba
+	xor a			; error code 00 ok, 01 unrecv, 02 write prot,
+				;	FF media changed
 	RET
 
 CS_to_LBA:
@@ -3982,13 +4012,7 @@ reset_CF:
 	call cf_wait
 	call cf_checkerror
 
-	;ld a, 2
-	;ld (VAR_LBA0), a
-	;xor a
-	;ld (VAR_LBA1), a
-	;ld (VAR_LBA2), a
-	;ld (VAR_LBA3), a
-	;call cf_write_lba
+	; call cf_format	;**********************************************
 	ret
 
 cf_wait:
@@ -4077,6 +4101,26 @@ cf_init:
 	out (IDE_SECC), a
 	ret
 
+cf_format:
+	ld a, 0xE5
+	call fill_buffer
+	ld a, 0
+	ld (VAR_LBA0), a
+	ld (VAR_LBA1), a
+	ld (VAR_LBA2), a
+	ld (VAR_LBA3), a
+	ld b, 30
+format_blocks:
+	push bc
+	ld a, b
+	ld (VAR_LBA0), a
+	call cf_load_lba_address
+	call cf_write_lba
+	pop bc
+	dec b
+	jr nz, format_blocks
+	ret
+
 fill_buffer:
 	ld de, blockbuff
 	ld hl, 512
@@ -4094,7 +4138,6 @@ fill_bytes:
 	pop af
 	ret
 
-blockbuff: defs 512
 
 track: DEFW 0
 sector: DEFW 0
@@ -4174,4 +4217,6 @@ chk03: defs 16
 
 WELCOME_MSG:	.ascii 0Ah,0Dh,"ReichelZ80 BIOS 0.1 (c) 2019 A.J.Reichel",0Ah,0Dh
 		.ascii "CP/M, Version 2.2", 0Ah, 0Dh, "$"
+
+blockbuff: defs	512
 
