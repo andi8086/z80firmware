@@ -1,0 +1,57 @@
+**** COMPILE CP/M 2.2 SOURCES WITH PL/M 80 Version 4 ****
+
+Use the ISIS-II emulator for DOS in DOSBOX and compile 'STAT.PLM':
+
+Assuming the PLM80 compiler in :F1:, the ASM80 assembler in :F2:,
+the linker etc in :F3: and the sources in :F0:, do the following:
+
+os5trint.src has a filename which is apparently 1 character too long for ISIS,
+rename it to os5tr.src.
+This Assembler file contains the needed external references to BOOT,MON1,MON2,etc
+
+On the ISIS prompt, type
+
+:F1:ASM80 OS5TR.SRC
+:F1:PLM80 STAT.PLM
+:F3:LINK STAT.OBJ,OS5TR.OBJ,:F1:PLM80.LIB TO STAT.MOD
+:F3:LOCATE STAT.MOD CODE(0100H) STACKSIZE(100)
+:F3:OBJHEX STAT TO STAT.HEX
+EXIT
+
+In Linux, use objcopy to convert stat.hex to stat.rom
+
+objcopy -I ihex -O binary STAT.HEX STAT.ROM
+
+Use my addheader bash script to add the header for the FIFO loader
+
+./addheader STAT.ROM 0x100
+
+this will generate a STAT.bin
+
+Reset the Z80 System and first load the RAM Loader (monitor.bin)
+
+cat monitor.bin > /dev/ttyUSB0
+
+Then load the program STAT.bin
+
+cat STAT.bin > /dev/ttyUSB0
+and press ENTER (any key except g, since we don't want to run it)
+
+Now load CP/M which will not clear the stat binary program we just loaded to 0x100
+
+cat cpm.bin > /dev/ttyUSB0
+
+and press g to start CP/M.
+
+Now store the program to disk with
+stat.rom itself has a size of 0x13CE, which means it occupies 0x0100 - 0x14CE, giving
+0x14 = 20 paragraphs to save, Hence
+
+SAVE 20 STAT.COM
+
+saves STAT.COM to disk. The definition in OS5TRINT.SRC contains the definition of MON1,
+a link to FDOS, which is expected to be at memory location 0x0005 ( a jump to FBASE )
+So, for the CP/M programs to work, the BIOS has to put 'JP FBASE' to memory location
+0x0005 before starting CP/M. It should also put 'JP COMMAND' to 0x0000 to 'reboot'
+CP/M after each program.
+
