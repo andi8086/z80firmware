@@ -46,7 +46,7 @@ CBASE:  LD	HL, 0
 	LD	A, 0xC3	; JP
 	LD	(HL), A
 	LD	HL, 1
-	LD	DE, COMMAND
+	LD	DE, WBOOT	; must be so, to satisfy the "find bios trick"
 	LD	(HL), DE
 
 	LD	HL, 0x05
@@ -55,11 +55,8 @@ CBASE:  LD	HL, 0
 	LD	HL, 0x06
 	LD	DE, FBASE
 	LD	(HL), DE
-	LD	DE, WELCOME_MSG
-	CALL	PRTSTR
-	LD	DE, COPYRIGHT
-	CALL	PRTSTR
 	CALL	reset_CF	; init compact flash card
+WBOOTENTRY:
 	LD	C, 00000000b	; UUUUDDDD, u=user, d=drive
 	JP	COMMAND		;execute command processor (ccp).
 	JP	CLEARBUF	;entry to empty input buffer before starting ccp.
@@ -3737,7 +3734,7 @@ CKSUMTBL: DEFB	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 ;**************************************************************
 ;
 BOOT:	JP	DUMMY
-WBOOT:	JP	0xE000
+WBOOT:	JP	WBOOTENTRY
 CONST:	JP	RZ80_CONSTAT
 CONIN:	JP	RZ80_CONIN
 CONOUT:	JP	RZ80_CONOUT
@@ -3872,6 +3869,7 @@ RZ80_READ:
 	EXX
 	LD (IX+2), HL
 	EXX
+
 	CALL cf_read_lba	; read 512 bytes into blockbuffer
 	LD DE, 128
 	POP AF
@@ -3937,6 +3935,23 @@ CS_to_LBA:
 	exx
 	ld hl, 0
 	exx
+	ld a, (diskno)	; is the drive A or B?
+	cp 2
+	jr c, _26_secspertrack
+	exx
+	; 256 sectors per track, easy shift
+	ld h, 0
+	ld l, a
+	exx
+	ld a, l
+	ld h, a		; now H'L'HL =<< 8
+	ld a, (sector)
+	dec a
+	ld l, a
+	ld b, 0		; used further below
+	exx
+	jr _shift_for_512bytes_sectors	; active regs are shadow regs
+_26_secspertrack:
 	ld a, 26
 	call MUL_HLHL_A
 	ld a, (sector)
@@ -3958,6 +3973,7 @@ CS_to_LBA:
 	; H'L'HL now contains LBA for 128 byte sectors
 	; divide it by 4 and get the rest as index in a
 	;exx
+_shift_for_512bytes_sectors:	; active regs must be shadow regs
 	rr h
 	rr l
 	exx
@@ -3971,7 +3987,7 @@ CS_to_LBA:
 	rr h
 	rr l
 	rl b
-	; H'L' now contains LBA for 512 byte sectors with a from 0 to 3
+	; H'L'HL now contains LBA for 512 byte sectors with a from 0 to 3
 	; as partial 512 byte block index for 128 byte sub blocks
 	ld a, b
 	ret
@@ -4025,7 +4041,7 @@ reset_CF:
 	call cf_wait
 	call cf_checkerror
 
-	; call cf_format	;**********************************************
+	;call cf_format	;**********************************************
 	ret
 
 cf_wait:
@@ -4178,13 +4194,13 @@ dpbase: defw  	transCF, 0000h
 ; disk parameter header for disk 02
         defw 	transCF, 0000h
 	defw  	0000h, 0000h
-	defw 	dirbf, dpblk
-	defw 	chk02, all02
+	defw 	dirbf, dpblk8M
+	defw 	chk00, all02
 ; disk parameter header for disk 03
         defw 	transCF, 0000h
 	defw  	0000h, 0000h
-	defw 	dirbf, dpblk
-	defw 	chk03, all03
+	defw 	dirbf, dpblk8M
+	defw 	chk00, all03
 ;
 ; sector translate vector
 trans8:	defm  	1, 7, 13, 19 	;sectors 1, 2, 3, 4
@@ -4215,21 +4231,33 @@ dpblk: ;disk parameter block for all disks.
 	defm 	0 	;alloc 1
 	defw 	0 	;check size
 	defw 	2 	;track offset
-;
+
+dpblk8M:  ; disk parameter block for 8M disks
+	defw	256	; sectors per track
+	defm	5	; blocksize = 4096
+	defm	31	; block mask 2**5 - 1
+	defm	2	; extent mask 2 bits
+			; since one extent can allocate 64K
+			; instead of 16K
+	defw	2047	; 2048 blocks on disk
+	defw	255	; 256 dir entries
+	defm	0b11000000 ; first two blocks for directory
+	defm	0	; ALV1
+	defw	0	; no check size, since not removable
+	defw	0	; no system tracks
+
 ; end of fixed tables
 ;
 dirbf: defs 128
 all00: defs 31
 all01: defs 31
-all02: defs 31
-all03: defs 31
-chk00: defs 16
-chk01: defs 16
-chk02: defs 16
-chk03: defs 16
 
-WELCOME_MSG:	.ascii 0Ah,0Dh,"ReichelZ80 BIOS 0.1 (c) 2019 A.J.Reichel",0Ah,0Dh
-		.ascii "CP/M, Version 2.2", 0Ah, 0Dh, "$"
+; DSM/8 + 1 = 2047/8 + 1 = 256
+
+all02: defs 256
+all03: defs 256
+chk00: defs 1
+chk01: defs 16
 
 blockbuff: defs	512
 
