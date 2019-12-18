@@ -10,7 +10,7 @@
 ;   Set memory limit here. This is the amount of contigeous
 ; ram starting from 0000. CP/M will reside at the end of this space.
 ;
-MEM	EQU	63		;for a 62k system (TS802 TEST - WORKS OK).
+MEM	EQU	60		;for a 62k system (TS802 TEST - WORKS OK).
 				; here we use 63K because we need more space
 				; for RZ80 bios
 ;
@@ -3732,6 +3732,7 @@ CKSUMTBL: DEFB	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 ;*        B I O S   J U M P   T A B L E
 ;*
 ;**************************************************************
+.org 0xF000
 ;
 BOOT:	JP	DUMMY
 WBOOT:	JP	WBOOTENTRY
@@ -4091,6 +4092,10 @@ read_bytes:
 	or l
 	jr nz, read_bytes
 	ret
+
+;.org 0F800h
+;isis_jumptable: defs 128
+		; reserve for isis-ii emulator
 
 cf_write_lba:
 	call cf_load_lba_address
