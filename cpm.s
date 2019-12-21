@@ -4241,7 +4241,7 @@ dpblk8M:  ; disk parameter block for 8M disks
 	defw	256	; sectors per track
 	defm	5	; blocksize = 4096
 	defm	31	; block mask 2**5 - 1
-	defm	2	; extent mask 2 bits
+	defm	3	; extent mask 2 bits
 			; since one extent can allocate 64K
 			; instead of 16K
 	defw	2047	; 2048 blocks on disk

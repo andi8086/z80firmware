@@ -41,3 +41,5 @@ printf "%b" "\x$(printf "%X" $sizeLSB)"
 printf "%b" "\x$(printf "%X" $sizeMSB)"
 printf "%b" "\x$(printf "%X" $cksumLSB)"
 printf "%b" "\x$(printf "%X" $cksumMSB)"
+
+echo $((sizeMSB+1)) paragraphs >&2
