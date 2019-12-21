@@ -28,7 +28,6 @@ nodrive:
 start_transfer:
 	ld a, '*'
 	out (0), a
-
 	ld d, 11
 	ld hl, FCB+1
 get_fname:
@@ -39,7 +38,6 @@ get_fname:
 	inc hl
 	dec d
 	jr nz, get_fname
-
 	call _fifo_get_byte	; get target addr low
 	ld (addr), a
 	call _fifo_get_byte	; get target addr hi
@@ -99,10 +97,6 @@ _finish_checksum:
 	LD DE, TransferOK
 	jp create_file
 
-	; go back to BDOS
-	LD C, 0
-	CALL 5
-
 _error_cksum:
 	LD DE, TransferERR
 	LD C, 9
@@ -121,6 +115,9 @@ create_file:
 	call BDOS
 	ret
 createfile2:
+	xor a
+	ld (FCB+32), a  ; set current record to 0
+	ld (FCB+12), a  ; set current extent to 0
 	ld c, 16h	; create file function
 	ld de, FCB
 	call BDOS
@@ -149,11 +146,11 @@ error_write_record:
 	call BDOS
 	ret
 prepare_next_rec:
-	ld a, l
 	ld c, 128
 	ld b, 0
 	ld hl, (size)
-	ccf
+	scf		; set carry
+	ccf		; complement carry
 	sbc hl, bc
 	jr c, close_file
 	ld a, l
@@ -169,7 +166,7 @@ close_file:
 	ld c, 10h	; close file
 	ld de, FCB
 	call BDOS
-	ret		; return to BDOS
+	jp start_transfer
 
 
 addr:	.word 0
